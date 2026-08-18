@@ -74,7 +74,7 @@ void loop() {
   mpu.getEvent(&a, &g, &temp_mpu);
   
   // Calculate pitch and roll in degrees
-  roll = atan2(a.acceleration.y, a.acceleration.z) * 180.0 / PI;
+  roll  = atan2(a.acceleration.y, a.acceleration.z) * 180.0 / PI;
   pitch = atan2(-a.acceleration.x, sqrt(a.acceleration.y * a.acceleration.y + a.acceleration.z * a.acceleration.z)) * 180.0 / PI;
   
   float temperature = 0, humidity = 0, pressure = 0, gas = 0;
@@ -82,33 +82,53 @@ void loop() {
   // Read BME688 Data
   if (bme.performReading()) {
     temperature = bme.temperature;
-    humidity = bme.humidity;
-    pressure = bme.pressure / 100.0; // convert Pa to hPa
-    gas = bme.gas_resistance / 1000.0; // convert Ohms to kOhms
+    humidity    = bme.humidity;
+    pressure    = bme.pressure / 100.0;    // Pa → hPa
+    gas         = bme.gas_resistance / 1000.0; // Ω → kΩ
   }
   
   // Read BMM350 Data
   sBmm350MagData_t magData = bmm350.getGeomagneticData();
+  float magX = magData.x;
+  float magY = magData.y;
+  float magZ = magData.z;
+
+  // ---- Tilt-Compensated Compass Heading ----
+  // Convert pitch & roll to radians
+  float pitchRad = pitch * PI / 180.0;
+  float rollRad  = roll  * PI / 180.0;
+
+  // Correct the raw mag readings for the tilt of the sensor
+  float magX_comp = magX * cos(pitchRad) + magZ * sin(pitchRad);
+  float magY_comp = magX * sin(rollRad)  * sin(pitchRad)
+                  + magY * cos(rollRad)
+                  - magZ * sin(rollRad)  * cos(pitchRad);
+
+  // Calculate heading angle 0-360°
+  float heading = atan2(-magY_comp, magX_comp) * 180.0 / PI;
+  if (heading < 0) heading += 360.0;
+  // ------------------------------------------
   
-  // Construct JSON (Increased size to 512 for extra fields)
-  StaticJsonDocument<512> doc; 
-  doc["temp"] = temperature;
-  doc["hum"] = humidity;
-  doc["press"] = pressure;
-  doc["gas"] = gas;
-  doc["roll"] = roll;
-  doc["pitch"] = pitch;
-  doc["magX"] = magData.x;
-  doc["magY"] = magData.y;
-  doc["magZ"] = magData.z;
+  // Construct JSON
+  StaticJsonDocument<512> doc;
+  doc["temp"]    = temperature;
+  doc["hum"]     = humidity;
+  doc["press"]   = pressure;
+  doc["gas"]     = gas;
+  doc["roll"]    = roll;
+  doc["pitch"]   = pitch;
+  doc["magX"]    = magX;
+  doc["magY"]    = magY;
+  doc["magZ"]    = magZ;
+  doc["heading"] = heading;   // <-- NEW: tilt-compensated compass heading
   
   String output;
   serializeJson(doc, output);
   
-  // Send data over RF and print to Serial for debugging
-  Serial2.println(output); // THIS SENDS TO THE RF MODULE!
-  Serial.print("Sending to RF: ");
+  // Send over RF and print to Serial for debugging
+  Serial2.println(output);
+  Serial.print("Sending: ");
   Serial.println(output);
   
-  delay(1000); // Transmit every 1 second
+  delay(1000);
 }
