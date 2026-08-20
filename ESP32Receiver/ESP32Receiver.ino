@@ -20,6 +20,7 @@ WebServer server(80);
 
 // Default JSON — temp, press, alt, roll, pitch, heading
 String latestJson = "{\"temp\":0,\"press\":0,\"alt\":0,\"roll\":0,\"pitch\":0,\"heading\":0}";
+unsigned long lastRxTime = 0;
 
 // Embedded HTML/CSS/JS (High-Tech Satellite Telemetry UI)
 const char index_html[] PROGMEM = R"rawliteral(
@@ -60,8 +61,12 @@ const char index_html[] PROGMEM = R"rawliteral(
       text-shadow: 0 0 10px rgba(0,255,234,0.5);
       text-transform: uppercase; letter-spacing: 2px;
     }
-    .status-indicator { display: flex; align-items: center; gap: 10px; font-size: 14px; color: var(--accent-color); }
-    .dot { height: 10px; width: 10px; background-color: #00ff00; border-radius: 50%; box-shadow: 0 0 10px #00ff00; animation: blink 1s infinite; }
+    .status-indicator { display: flex; align-items: center; gap: 10px; font-size: 14px; color: var(--accent-color); transition: color 0.3s; }
+    .dot { height: 10px; width: 10px; background-color: #00ff00; border-radius: 50%; box-shadow: 0 0 10px #00ff00; animation: blink 1s infinite; transition: all 0.3s; }
+    .dot.lost { background-color: #ff0000; box-shadow: 0 0 10px #ff0000; }
+    .status-indicator.lost { color: #ff4d4d; }
+    .grid { opacity: 1; transition: opacity 0.5s; }
+    .grid.lost { opacity: 0.4; }
     @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.3} }
 
     /* 3D Satellite Panel */
@@ -85,7 +90,7 @@ const char index_html[] PROGMEM = R"rawliteral(
     #satellite-canvas { width:100%; display:block; height:220px; }
 
     /* Data Grid */
-    .grid {
+    .grid-container {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
       gap: 18px;
@@ -119,7 +124,10 @@ const char index_html[] PROGMEM = R"rawliteral(
 <body>
   <div class="header">
     <h1>CanSat // Mission Control</h1>
-    <div class="status-indicator"><div class="dot"></div>LINK ACTIVE</div>
+    <div class="status-indicator" id="status-indicator">
+      <div class="dot" id="status-dot"></div>
+      <span id="status-text">LINK ACTIVE</span>
+    </div>
   </div>
 
   <!-- 3D Satellite Attitude Visualizer -->
@@ -134,7 +142,7 @@ const char index_html[] PROGMEM = R"rawliteral(
     <canvas id="satellite-canvas" width="800" height="220"></canvas>
   </div>
 
-  <div class="grid">
+  <div class="grid grid-container" id="data-grid">
 
     <!-- Attitude Control -->
     <div class="section-title">Attitude Control (MPU-6050)</div>
@@ -346,29 +354,46 @@ const char index_html[] PROGMEM = R"rawliteral(
       fetch('/data')
         .then(r=>r.json())
         .then(d=>{
-          // 3D satellite
-          livePitch=d.pitch; liveRoll=d.roll;
-          document.getElementById('sat-pitch').innerText=d.pitch.toFixed(1);
-          document.getElementById('sat-roll').innerText=d.roll.toFixed(1);
+          const dot = document.getElementById('status-dot');
+          const indicator = document.getElementById('status-indicator');
+          const text = document.getElementById('status-text');
+          const grid = document.getElementById('data-grid');
 
-          // Attitude
-          document.getElementById('pitch').innerText=d.pitch.toFixed(1);
-          document.getElementById('roll').innerText=d.roll.toFixed(1);
-          pushAndDraw('pitch',d.pitch);
-          pushAndDraw('roll',d.roll);
+          if (d.connected) {
+            dot.className = 'dot';
+            indicator.className = 'status-indicator';
+            text.innerText = 'LINK ACTIVE';
+            grid.className = 'grid grid-container';
+            
+            // 3D satellite
+            livePitch=d.pitch; liveRoll=d.roll;
+            document.getElementById('sat-pitch').innerText=d.pitch.toFixed(1);
+            document.getElementById('sat-roll').innerText=d.roll.toFixed(1);
 
-          // Environment (BMP-390)
-          document.getElementById('temp').innerText=d.temp.toFixed(1);
-          document.getElementById('press').innerText=d.press.toFixed(2);
-          document.getElementById('alt').innerText=d.alt.toFixed(1);
-          pushAndDraw('temp',d.temp);
-          pushAndDraw('press',d.press);
-          pushAndDraw('alt',d.alt);
+            // Attitude
+            document.getElementById('pitch').innerText=d.pitch.toFixed(1);
+            document.getElementById('roll').innerText=d.roll.toFixed(1);
+            pushAndDraw('pitch',d.pitch);
+            pushAndDraw('roll',d.roll);
 
-          // Compass
-          drawCompass(d.heading);
-          document.getElementById('heading-deg').innerText=Math.round(d.heading);
-          document.getElementById('heading-dir').innerText=bearingLabel(d.heading);
+            // Environment (BMP-390)
+            document.getElementById('temp').innerText=d.temp.toFixed(1);
+            document.getElementById('press').innerText=d.press.toFixed(2);
+            document.getElementById('alt').innerText=d.alt.toFixed(1);
+            pushAndDraw('temp',d.temp);
+            pushAndDraw('press',d.press);
+            pushAndDraw('alt',d.alt);
+
+            // Compass
+            drawCompass(d.heading);
+            document.getElementById('heading-deg').innerText=Math.round(d.heading);
+            document.getElementById('heading-dir').innerText=bearingLabel(d.heading);
+          } else {
+            dot.className = 'dot lost';
+            indicator.className = 'status-indicator lost';
+            text.innerText = 'LINK LOST \u26A0\uFE0F';
+            grid.className = 'grid grid-container lost';
+          }
         })
         .catch(()=>{});
     }, 500);
@@ -400,7 +425,14 @@ void setup() {
 
   // Serve live JSON data
   server.on("/data", HTTP_GET, []() {
-    server.send(200, "application/json", latestJson);
+    bool isConnected = (millis() - lastRxTime) < 3000;
+    String response = latestJson;
+    // Strip the last '}' and add the connected status
+    if (response.endsWith("}")) {
+      response = response.substring(0, response.length() - 1);
+      response += ",\"connected\":" + String(isConnected ? "true" : "false") + "}";
+    }
+    server.send(200, "application/json", response);
   });
 
   // Redirect any other URL to dashboard (captive portal)
@@ -427,6 +459,7 @@ void loop() {
 
       if (!error) {
         latestJson = incomingJson;
+        lastRxTime = millis(); // Reset the watchdog timer
         Serial.println(latestJson);
       } else {
         Serial.println("JSON parse error");
