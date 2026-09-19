@@ -222,16 +222,57 @@ const char index_html[] PROGMEM = R"rawliteral(
     }
     .sat-angles {
       display:flex;
-      gap:20px;
+      gap:16px;
       font-size:13px;
       flex-wrap:wrap;
     }
     .sat-angles div { color:var(--text-dim); }
     .sat-angles strong { color:var(--accent-color); }
-    #satellite-canvas {
-      width:100%;
-      display:block;
-      height:210px;
+    .sat-footer {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 10px;
+      padding-top: 8px;
+      border-top: 1px solid rgba(0, 90, 143, 0.4);
+    }
+    .sat-badge {
+      font-size: 11px;
+      background: rgba(0,255,234,0.12);
+      border: 1px solid var(--border-color);
+      color: var(--accent-color);
+      padding: 4px 8px;
+      border-radius: 3px;
+      white-space: nowrap;
+      display: inline-flex;
+      align-items: center;
+    }
+    .sat-hint {
+      font-size: 10px;
+      color: var(--text-dim);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    @media (max-width: 600px) {
+      .sat-header {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 6px;
+      }
+      .sat-angles {
+        gap: 10px;
+        font-size: 12px;
+      }
+      .sat-footer {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 6px;
+      }
+      .sat-hint {
+        font-size: 9px;
+      }
     }
 
     /* Data Grid */
@@ -365,12 +406,10 @@ const char index_html[] PROGMEM = R"rawliteral(
       </div>
       <div style="position:relative; width:100%; height:260px; overflow:hidden;">
         <canvas id="sat-3d-canvas" style="width:100%; height:100%; display:block; cursor:grab;"></canvas>
-        <div id="sat-mode-badge" style="position:absolute; bottom:10px; left:12px; font-size:11px; background:rgba(0,255,234,0.12); border:1px solid var(--border-color); color:var(--accent-color); padding:4px 8px; border-radius:3px;">
-          &#x25CF; TRACKING LIVE ATTITUDE
-        </div>
-        <div style="position:absolute; bottom:10px; right:12px; font-size:10px; color:var(--text-dim); text-transform:uppercase;">
-          &#x1F5B1; DRAG TO INSPECT &bull; RELEASE TO SNAP BACK
-        </div>
+      </div>
+      <div class="sat-footer">
+        <div id="sat-mode-badge" class="sat-badge">&#x25CF; TRACKING LIVE ATTITUDE</div>
+        <div class="sat-hint">&#x1F5B1; DRAG TO INSPECT &bull; RELEASE TO SNAP BACK</div>
       </div>
     </div>
 
@@ -536,6 +575,9 @@ const char index_html[] PROGMEM = R"rawliteral(
     let targetPitch = 0;
     let targetRoll  = 0;
     let targetYaw   = 0;
+    let currentPitch = 0;
+    let currentRoll  = 0;
+    let currentYaw   = 0;
 
     let manualYawOffset   = 0;
     let manualPitchOffset = 0;
@@ -608,11 +650,25 @@ const char index_html[] PROGMEM = R"rawliteral(
     window.addEventListener('resize', resize3D);
     setTimeout(resize3D, 250);
 
-    // Animation loop with smooth spring snap-back
+    // Shortest angular distance interpolation for yaw / heading (handles 0° <-> 360° boundary)
+    function lerpAngle(cur, target, alpha) {
+      let diff = (target - cur) % (Math.PI * 2);
+      if (diff < -Math.PI) diff += Math.PI * 2;
+      if (diff > Math.PI)  diff -= Math.PI * 2;
+      return cur + diff * alpha;
+    }
+
+    // Animation loop with smooth interpolation and spring snap-back
     function animate3D() {
       requestAnimationFrame(animate3D);
 
       if (satModel) {
+        // Buttery-smooth interpolation towards sensor telemetry targets
+        const smoothSpeed = 0.08;
+        currentPitch += (targetPitch - currentPitch) * smoothSpeed;
+        currentRoll  += (targetRoll  - currentRoll)  * smoothSpeed;
+        currentYaw    = lerpAngle(currentYaw, targetYaw, smoothSpeed);
+
         // Smoothly spring manual offsets back to zero upon release
         if (!isDragging) {
           manualYawOffset   += (0 - manualYawOffset) * 0.08;
@@ -621,9 +677,9 @@ const char index_html[] PROGMEM = R"rawliteral(
 
         // Aerospace Tait-Bryan Euler (Pitch on X, Heading on Y, Roll on Z)
         const euler = new THREE.Euler(
-          targetPitch + manualPitchOffset,
-          targetYaw   + manualYawOffset,
-          targetRoll,
+          currentPitch + manualPitchOffset,
+          currentYaw   + manualYawOffset,
+          currentRoll,
           'YXZ'
         );
         satModel.setRotationFromEuler(euler);
