@@ -42,7 +42,8 @@ const char index_html[] PROGMEM = R"rawliteral(
     }
   </script>
   <style>
-    @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap');
+    /* Share Tech Mono served locally via fallback chain — no CDN needed in field deployment */
+    /* @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap'); */
     :root {
       --bg-color: #030a16;
       --panel-bg: rgba(16, 33, 58, 0.75);
@@ -279,12 +280,31 @@ const char index_html[] PROGMEM = R"rawliteral(
     .sat-3d-wrapper {
       position: relative;
       width: 100%;
-      height: 260px;
+      height: 380px;
       overflow: hidden;
     }
-    .sat-3d-wrapper:-webkit-full-screen { height: 100vh; }
-    .sat-3d-wrapper:-moz-full-screen    { height: 100vh; }
-    .sat-3d-wrapper:fullscreen           { height: 100vh; background: #030a16; }
+    /* 3D model load error overlay */
+    #model-error {
+      display: none;
+      position: absolute;
+      inset: 0;
+      background: rgba(3,10,22,0.88);
+      color: var(--danger-color);
+      font-size: 14px;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      align-items: center;
+      justify-content: center;
+      flex-direction: column;
+      gap: 8px;
+      z-index: 15;
+      pointer-events: none;
+    }
+    #model-error.show { display: flex; }
+    #model-error span { font-size: 36px; }
+    .sat-3d-wrapper:-webkit-full-screen { height: 100vh !important; }
+    .sat-3d-wrapper:-moz-full-screen    { height: 100vh !important; }
+    .sat-3d-wrapper:fullscreen           { height: 100vh !important; background: #030a16; }
     /* When fullscreen, canvas fills the wrapper */
     .sat-3d-wrapper:fullscreen #sat-3d-canvas,
     .sat-3d-wrapper:-webkit-full-screen #sat-3d-canvas,
@@ -368,24 +388,46 @@ const char index_html[] PROGMEM = R"rawliteral(
     .sat-3d-wrapper:-webkit-full-screen #fs-badge,
     .sat-3d-wrapper:-moz-full-screen #fs-badge { display: block; }
     @media (max-width: 600px) {
-      .sat-header {
-        flex-direction: column;
-        align-items: flex-start;
-        gap: 6px;
-      }
-      .sat-angles {
-        gap: 10px;
-        font-size: 12px;
-      }
-      .sat-footer {
-        flex-direction: column;
-        align-items: flex-start;
-        gap: 6px;
-      }
-      .sat-hint {
-        font-size: 9px;
-      }
+      .sat-header { flex-direction: column; align-items: flex-start; gap: 6px; }
+      .sat-angles { gap: 10px; font-size: 12px; }
+      .sat-footer { flex-direction: column; align-items: flex-start; gap: 6px; }
+      .sat-hint   { font-size: 9px; }
+      /* hide title on small phones in fullscreen so exit btn stays visible */
+      .sat-3d-wrapper:fullscreen #fs-overlay-title,
+      .sat-3d-wrapper:-webkit-full-screen #fs-overlay-title,
+      .sat-3d-wrapper:-moz-full-screen #fs-overlay-title { display: none; }
+      #fs-overlay-angles { font-size: 10px; gap: 10px; }
     }
+    /* Toast notification */
+    #toast {
+      position: fixed;
+      bottom: 28px;
+      left: 50%;
+      transform: translateX(-50%) translateY(20px);
+      background: rgba(10,25,46,0.96);
+      border: 1px solid var(--border-color);
+      color: var(--accent-color);
+      font-size: 12px;
+      padding: 10px 22px;
+      border-radius: 4px;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      opacity: 0;
+      pointer-events: none;
+      z-index: 9999;
+      transition: opacity 0.3s ease, transform 0.3s ease;
+      white-space: nowrap;
+    }
+    #toast.show {
+      opacity: 1;
+      transform: translateX(-50%) translateY(0);
+    }
+    /* Attitude status colour coding */
+    .status-stable  { color: var(--success-color); }
+    .status-tilted  { color: var(--warn-color); }
+    .status-tumbled { color: var(--danger-color); }
+    /* Responsive compass canvas */
+    #compass-canvas { max-width: 100%; max-height: 100%; }
 
     /* Data Grid */
     .grid { opacity: 1; transition: opacity 0.4s; }
@@ -519,6 +561,8 @@ const char index_html[] PROGMEM = R"rawliteral(
       </div>
       <div class="sat-3d-wrapper" id="sat-3d-wrapper">
         <canvas id="sat-3d-canvas" style="width:100%; height:100%; display:block; cursor:grab;"></canvas>
+        <!-- Model load error overlay -->
+        <div id="model-error"><span>&#x26A0;</span>3D Model Failed to Load<br><small style="font-size:11px;color:#8ba9c9;">Check flash storage or re-upload firmware</small></div>
         <!-- Fullscreen overlay toolbar (top bar) -->
         <div id="fs-overlay">
           <div id="fs-overlay-title">&#x1F6F0; CanSat // Live Attitude</div>
@@ -595,16 +639,28 @@ const char index_html[] PROGMEM = R"rawliteral(
       </div>
 
       <!-- Navigation (BMM-350 Compass) -->
-      <div class="section-title">&#x25C6; Direction & Heading (BMM-350 Compass)</div>
+      <div class="section-title">&#x25C6; Direction &amp; Heading (BMM-350 Compass)</div>
+
+      <!-- Heading sparkline card -->
+      <div class="card">
+        <h3>Heading</h3>
+        <div class="val-container"><div class="val"><span id="head-val">---</span><span class="unit">&deg;</span></div></div>
+        <div class="sub-stats">
+          <div>DIR: <strong id="head-dir-card">---</strong></div>
+          <div>MIN: <strong id="head-min">---</strong></div>
+          <div>MAX: <strong id="head-max">---</strong></div>
+        </div>
+        <canvas class="sparkline" id="canvas-head" width="240" height="55"></canvas>
+      </div>
 
       <div class="card card-compass">
-        <h3>Heading (Tilt-Compensated)</h3>
-        <div style="display:flex; align-items:center; gap:28px; justify-content:center; flex-wrap:wrap; width:100%; padding:8px 0;">
-          <canvas id="compass-canvas" width="200" height="200"></canvas>
+        <h3>Compass Rose (Tilt-Compensated)</h3>
+        <div style="display:flex; align-items:center; gap:20px; justify-content:center; flex-wrap:wrap; width:100%; padding:8px 0;">
+          <canvas id="compass-canvas" width="180" height="180" style="max-width:180px; max-height:180px;"></canvas>
           <div style="text-align:center;">
             <div style="font-size:11px; color:var(--text-dim); text-transform:uppercase; letter-spacing:1.5px; margin-bottom:6px;">Bearing</div>
-            <div style="font-size:52px; color:var(--accent-color); text-shadow:0 0 14px rgba(0,255,234,0.45); font-weight:bold;">
-              <span id="heading-deg">---</span><span style="font-size:22px; color:var(--text-dim);">&deg;</span>
+            <div style="font-size:48px; color:var(--accent-color); text-shadow:0 0 14px rgba(0,255,234,0.45); font-weight:bold;">
+              <span id="heading-deg">---</span><span style="font-size:20px; color:var(--text-dim);">&deg;</span>
             </div>
             <div id="heading-dir" style="font-size:18px; color:var(--text-dim); margin-top:4px; letter-spacing:2px; font-weight:bold;">---</div>
           </div>
@@ -653,9 +709,21 @@ const char index_html[] PROGMEM = R"rawliteral(
       minPress = 9999; maxPress = -9999;
     }
 
+    // ── Toast notification (replaces alert()) ─────────────────
+    let toastTimer;
+    function showToast(msg, isError) {
+      const t = document.getElementById('toast');
+      t.innerText = msg;
+      t.style.borderColor = isError ? 'var(--danger-color)' : 'var(--accent-color)';
+      t.style.color       = isError ? 'var(--danger-color)' : 'var(--accent-color)';
+      t.classList.add('show');
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => t.classList.remove('show'), 3000);
+    }
+
     function exportCSV() {
       if (flightLog.length === 0) {
-        alert("No flight telemetry logged yet!");
+        showToast('No flight telemetry logged yet!', true);
         return;
       }
       let csv = "Timestamp_ISO,MET_Seconds,Temperature_C,Pressure_hPa,Altitude_m,Roll_deg,Pitch_deg,Heading_deg\n";
@@ -671,6 +739,7 @@ const char index_html[] PROGMEM = R"rawliteral(
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
+      showToast('CSV Exported! (' + flightLog.length + ' packets)', false);
     }
 
     // =====================================================
@@ -680,6 +749,19 @@ const char index_html[] PROGMEM = R"rawliteral(
     const badge3D  = document.getElementById('sat-mode-badge');
     const scene3D  = new THREE.Scene();
     scene3D.background = new THREE.Color(0x030a16);
+
+    // ── Star field ────────────────────────────────────────────
+    (function addStarField() {
+      const count = 300;
+      const positions = new Float32Array(count * 3);
+      for (let i = 0; i < count * 3; i++) {
+        positions[i] = (Math.random() - 0.5) * 1200;
+      }
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+      const mat = new THREE.PointsMaterial({ color: 0xaaccff, size: 1.2, sizeAttenuation: true, transparent: true, opacity: 0.7 });
+      scene3D.add(new THREE.Points(geo, mat));
+    })();
 
     const camera3D = new THREE.PerspectiveCamera(40, (canvas3D.clientWidth || 800) / (canvas3D.clientHeight || 260), 0.1, 2000);
     const renderer3D = new THREE.WebGLRenderer({ canvas: canvas3D, antialias: true, alpha: true });
@@ -729,6 +811,9 @@ const char index_html[] PROGMEM = R"rawliteral(
       scene3D.add(satModel);
     }, undefined, function(err) {
       console.warn("Could not load /satellite.glb:", err);
+      // Show visible error overlay so the user knows what happened
+      const errEl = document.getElementById('model-error');
+      if (errEl) errEl.classList.add('show');
     });
 
     // ── Drag helpers ──────────────────────────────────────────
@@ -867,7 +952,7 @@ const char index_html[] PROGMEM = R"rawliteral(
     // SPARKLINE GRAPH ENGINE
     // =====================================================
     const MAX_POINTS = 30;
-    const hist = { pitch:[], roll:[], temp:[], press:[], alt:[] };
+    const hist = { pitch:[], roll:[], temp:[], press:[], alt:[], head:[] };
 
     function drawSparkline(key) {
       const canvas=document.getElementById('canvas-'+key);
@@ -880,6 +965,17 @@ const char index_html[] PROGMEM = R"rawliteral(
       let mn=Math.min(...data), mx=Math.max(...data);
       if(mn===mx){mn-=1;mx+=1;}
       const rng=mx-mn;
+      // Draw baseline zero line if zero is within range
+      if (mn <= 0 && mx >= 0) {
+        const zy = H - ((0 - mn)/rng)*H*0.78 - H*0.11;
+        ctx.beginPath();
+        ctx.strokeStyle='rgba(0,255,234,0.18)';
+        ctx.lineWidth=1;
+        ctx.setLineDash([4,4]);
+        ctx.moveTo(0,zy); ctx.lineTo(W,zy);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
       ctx.beginPath(); ctx.strokeStyle='#00ffea'; ctx.lineWidth=2; ctx.lineJoin='round';
       for(let i=0;i<data.length;i++){
         const x=(i/(MAX_POINTS-1))*W;
@@ -1007,11 +1103,17 @@ const char index_html[] PROGMEM = R"rawliteral(
             document.getElementById('sat-head').innerText=Math.round(d.heading || 0);
             syncFsOverlay(d.pitch || 0, d.roll || 0, d.heading || 0);
 
-            // Dynamics
+            // Dynamics — 3-state attitude status
             document.getElementById('pitch').innerText=d.pitch.toFixed(1);
             document.getElementById('roll').innerText=d.roll.toFixed(1);
-            document.getElementById('pitch-status').innerText = Math.abs(d.pitch) > 45 ? 'TUMBLED' : 'STABLE';
-            document.getElementById('roll-status').innerText = Math.abs(d.roll) > 45 ? 'TUMBLED' : 'STABLE';
+            function attitudeStatus(el, deg) {
+              const abs = Math.abs(deg);
+              if (abs > 45)      { el.innerText='TUMBLED'; el.className='status-tumbled'; }
+              else if (abs > 15) { el.innerText='TILTED';  el.className='status-tilted';  }
+              else               { el.innerText='STABLE';  el.className='status-stable';  }
+            }
+            attitudeStatus(document.getElementById('pitch-status'), d.pitch);
+            attitudeStatus(document.getElementById('roll-status'),  d.roll);
             pushAndDraw('pitch',d.pitch);
             pushAndDraw('roll',d.roll);
 
@@ -1050,21 +1152,38 @@ const char index_html[] PROGMEM = R"rawliteral(
             document.getElementById('temp-max').innerText = maxTemp.toFixed(1) + '°';
             pushAndDraw('temp',d.temp);
 
-            // Compass
+            // Compass + heading card
             drawCompass(d.heading);
-            document.getElementById('heading-deg').innerText=Math.round(d.heading);
-            document.getElementById('heading-dir').innerText=bearingLabel(d.heading);
+            const hRound = Math.round(d.heading);
+            const hLabel = bearingLabel(d.heading);
+            document.getElementById('heading-deg').innerText = hRound;
+            document.getElementById('heading-dir').innerText = hLabel;
+            // Heading card
+            document.getElementById('head-val').innerText = hRound;
+            document.getElementById('head-dir-card').innerText = hLabel;
+            if (!window.minHead || d.heading < window.minHead) { window.minHead=d.heading; document.getElementById('head-min').innerText=Math.round(window.minHead)+'\u00b0'; }
+            if (!window.maxHead || d.heading > window.maxHead) { window.maxHead=d.heading; document.getElementById('head-max').innerText=Math.round(window.maxHead)+'\u00b0'; }
+            pushAndDraw('head', d.heading);
           } else {
             dot.className = 'dot lost';
             indicator.className = 'status-indicator lost';
             text.innerText = 'LINK LOST \u26A0\uFE0F';
             grid.className = 'grid grid-container lost';
             document.getElementById('pkt-rate').innerText = '0.0';
+            // Vibrate on mobile when link is lost (only once per loss event)
+            if (!window._linkWasLost) {
+              window._linkWasLost = true;
+              showToast('\u26A0\uFE0F RF Link Lost!', true);
+              if (navigator.vibrate) navigator.vibrate([200, 100, 200, 100, 200]);
+            }
           }
+          if (d.connected) window._linkWasLost = false;
         })
         .catch(()=>{});
     }, 400);
   </script>
+  <!-- Toast element (global, always in DOM) -->
+  <div id="toast"></div>
 </body>
 </html>
 )rawliteral";
