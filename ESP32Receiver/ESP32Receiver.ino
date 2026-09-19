@@ -2,6 +2,9 @@
 #include <WebServer.h>
 #include <DNSServer.h>
 #include <ArduinoJson.h>
+#include "three_js.h"
+#include "gltf_loader.h"
+#include "satellite_model.h"
 
 // Wi-Fi Access Point Credentials
 const char* ssid     = "K12 Satellite";
@@ -30,6 +33,14 @@ const char index_html[] PROGMEM = R"rawliteral(
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>CanSat // Mission Control</title>
+  <script src="/three.min.js"></script>
+  <script src="/GLTFLoader.js"></script>
+  <script>
+    if (typeof THREE === 'undefined') {
+      document.write('<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"><\\/script>');
+      document.write('<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"><\\/script>');
+    }
+  </script>
   <style>
     @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap');
     :root {
@@ -345,14 +356,22 @@ const char index_html[] PROGMEM = R"rawliteral(
     <!-- 3D Satellite Attitude Visualizer -->
     <div class="sat-panel">
       <div class="sat-header">
-        <span>&#x25B6; Live Attitude Visualizer // 3D Render</span>
+        <span>&#x25B6; 3D Satellite Attitude // Live Sensor Mirror</span>
         <div class="sat-angles">
           <div>Pitch: <strong><span id="sat-pitch">0.0</span>&deg;</strong></div>
           <div>Roll: <strong><span id="sat-roll">0.0</span>&deg;</strong></div>
           <div>Heading: <strong><span id="sat-head">0</span>&deg;</strong></div>
         </div>
       </div>
-      <canvas id="satellite-canvas" width="800" height="210"></canvas>
+      <div style="position:relative; width:100%; height:260px; overflow:hidden;">
+        <canvas id="sat-3d-canvas" style="width:100%; height:100%; display:block; cursor:grab;"></canvas>
+        <div id="sat-mode-badge" style="position:absolute; bottom:10px; left:12px; font-size:11px; background:rgba(0,255,234,0.12); border:1px solid var(--border-color); color:var(--accent-color); padding:4px 8px; border-radius:3px;">
+          &#x25CF; TRACKING LIVE ATTITUDE
+        </div>
+        <div style="position:absolute; bottom:10px; right:12px; font-size:10px; color:var(--text-dim); text-transform:uppercase;">
+          &#x1F5B1; DRAG TO INSPECT &bull; RELEASE TO SNAP BACK
+        </div>
+      </div>
     </div>
 
     <div class="grid grid-container" id="data-grid">
@@ -491,76 +510,128 @@ const char index_html[] PROGMEM = R"rawliteral(
     }
 
     // =====================================================
-    // 3D SATELLITE VISUALIZER ENGINE
+    // REAL-TIME 3D SATELLITE ENGINE (Three.js + GLTF)
     // =====================================================
-    const satCanvas = document.getElementById('satellite-canvas');
-    const satCtx    = satCanvas.getContext('2d');
-    let livePitch = 0, liveRoll = 0, autoYaw = 0;
+    const canvas3D = document.getElementById('sat-3d-canvas');
+    const badge3D  = document.getElementById('sat-mode-badge');
+    const scene3D  = new THREE.Scene();
+    scene3D.background = new THREE.Color(0x030a16);
 
-    function resizeSat() {
-      const rect = satCanvas.getBoundingClientRect();
-      if (rect.width > 0) {
-        satCanvas.width = rect.width;
+    const camera3D = new THREE.PerspectiveCamera(40, (canvas3D.clientWidth || 800) / (canvas3D.clientHeight || 260), 0.1, 2000);
+    const renderer3D = new THREE.WebGLRenderer({ canvas: canvas3D, antialias: true, alpha: true });
+    renderer3D.setSize(canvas3D.clientWidth || 800, canvas3D.clientHeight || 260);
+    renderer3D.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+
+    // Space Lighting
+    const ambLight = new THREE.AmbientLight(0xffffff, 0.95);
+    scene3D.add(ambLight);
+    const sunLight = new THREE.DirectionalLight(0xffffff, 1.4);
+    sunLight.position.set(200, 300, 150);
+    scene3D.add(sunLight);
+    const rimLight = new THREE.DirectionalLight(0x00ffea, 0.7);
+    rimLight.position.set(-200, -150, -200);
+    scene3D.add(rimLight);
+
+    let satModel = null;
+    let targetPitch = 0;
+    let targetRoll  = 0;
+    let targetYaw   = 0;
+
+    let manualYawOffset   = 0;
+    let manualPitchOffset = 0;
+    let isDragging        = false;
+    let lastPointerX = 0, lastPointerY = 0;
+
+    const loader = new THREE.GLTFLoader();
+    loader.load('/satellite.glb', function(gltf) {
+      satModel = gltf.scene;
+
+      // Auto-center & fit into view
+      const box = new THREE.Box3().setFromObject(satModel);
+      const center = box.getCenter(new THREE.Vector3());
+      const size = box.getSize(new THREE.Vector3());
+      satModel.position.sub(center);
+
+      const maxDim = Math.max(size.x, size.y, size.z);
+      const scale = 52.0 / (maxDim || 1);
+      satModel.scale.set(scale, scale, scale);
+
+      camera3D.position.set(0, 22, 90);
+      camera3D.lookAt(0, 0, 0);
+
+      scene3D.add(satModel);
+    }, undefined, function(err) {
+      console.warn("Could not load /satellite.glb:", err);
+    });
+
+    // Touch & Mouse Drag Controls
+    canvas3D.addEventListener('pointerdown', e => {
+      isDragging = true;
+      lastPointerX = e.clientX;
+      lastPointerY = e.clientY;
+      badge3D.innerText = '◐ USER INSPECTION (RELEASE TO ALIGN)';
+      badge3D.style.borderColor = 'var(--warn-color)';
+      badge3D.style.color = 'var(--warn-color)';
+      canvas3D.style.cursor = 'grabbing';
+    });
+
+    window.addEventListener('pointermove', e => {
+      if (!isDragging) return;
+      const dx = e.clientX - lastPointerX;
+      const dy = e.clientY - lastPointerY;
+      lastPointerX = e.clientX;
+      lastPointerY = e.clientY;
+
+      manualYawOffset   += dx * 0.01;
+      manualPitchOffset += dy * 0.01;
+    });
+
+    window.addEventListener('pointerup', () => {
+      if (isDragging) {
+        isDragging = false;
+        badge3D.innerText = '● TRACKING LIVE ATTITUDE';
+        badge3D.style.borderColor = 'var(--border-color)';
+        badge3D.style.color = 'var(--accent-color)';
+        canvas3D.style.cursor = 'grab';
+      }
+    });
+
+    // Handle Window Resize
+    function resize3D() {
+      const parent = canvas3D.parentElement;
+      if (parent && parent.clientWidth > 0 && parent.clientHeight > 0) {
+        camera3D.aspect = parent.clientWidth / parent.clientHeight;
+        camera3D.updateProjectionMatrix();
+        renderer3D.setSize(parent.clientWidth, parent.clientHeight);
       }
     }
-    window.addEventListener('resize', resizeSat);
-    resizeSat();
+    window.addEventListener('resize', resize3D);
+    setTimeout(resize3D, 250);
 
-    function makeSatVerts() {
-      const b = [28, 18, 12];
-      const pw = 45, ph = 2.5, pd = 22;
-      return [
-        [-b[0],-b[1],-b[2]], [ b[0],-b[1],-b[2]], [ b[0], b[1],-b[2]], [-b[0], b[1],-b[2]],
-        [-b[0],-b[1], b[2]], [ b[0],-b[1], b[2]], [ b[0], b[1], b[2]], [-b[0], b[1], b[2]],
-        [-b[0]-pw,-ph,-pd],[-b[0],-ph,-pd],[-b[0],ph,-pd],[-b[0]-pw,ph,-pd],
-        [-b[0]-pw,-ph, pd],[-b[0],-ph, pd],[-b[0],ph, pd],[-b[0]-pw,ph, pd],
-        [ b[0],-ph,-pd],[ b[0]+pw,-ph,-pd],[ b[0]+pw,ph,-pd],[ b[0],ph,-pd],
-        [ b[0],-ph, pd],[ b[0]+pw,-ph, pd],[ b[0]+pw,ph, pd],[ b[0],ph, pd],
-        [0,-b[1],0],[0,-b[1]-22,0]
-      ];
-    }
-    function makeSatEdges() {
-      const addBox = s => {
-        const f = [];
-        f.push([s,s+1],[s+1,s+2],[s+2,s+3],[s+3,s]);
-        f.push([s+4,s+5],[s+5,s+6],[s+6,s+7],[s+7,s+4]);
-        f.push([s,s+4],[s+1,s+5],[s+2,s+6],[s+3,s+7]);
-        return f;
-      };
-      return [...addBox(0),...addBox(8),...addBox(16),[24,25]];
-    }
-    const SAT_VERTS = makeSatVerts();
-    const SAT_EDGES = makeSatEdges();
+    // Animation loop with smooth spring snap-back
+    function animate3D() {
+      requestAnimationFrame(animate3D);
 
-    function rotateVert(v, pitch, roll, yaw) {
-      let [x,y,z] = v;
-      let x1=x*Math.cos(yaw)+z*Math.sin(yaw), z1=-x*Math.sin(yaw)+z*Math.cos(yaw);
-      let y2=y*Math.cos(pitch)-z1*Math.sin(pitch), z2=y*Math.sin(pitch)+z1*Math.cos(pitch);
-      let x3=x1*Math.cos(roll)-y2*Math.sin(roll), y3=x1*Math.sin(roll)+y2*Math.cos(roll);
-      return [x3,y3,z2];
-    }
-    function project(v,cx,cy,fov){const s=fov/(fov+v[2]+50);return[cx+v[0]*s,cy+v[1]*s,s];}
+      if (satModel) {
+        // Smoothly spring manual offsets back to zero upon release
+        if (!isDragging) {
+          manualYawOffset   += (0 - manualYawOffset) * 0.08;
+          manualPitchOffset += (0 - manualPitchOffset) * 0.08;
+        }
 
-    function drawSat() {
-      const W=satCanvas.width,H=satCanvas.height,cx=W/2,cy=H/2,fov=260;
-      const pR=livePitch*Math.PI/180, rR=liveRoll*Math.PI/180;
-      satCtx.clearRect(0,0,W,H);
-      const proj=SAT_VERTS.map(v=>project(rotateVert(v,pR,rR,autoYaw),cx,cy,fov));
-      for(let pass=0;pass<2;pass++){
-        satCtx.shadowColor=pass===0?'#00ffea':'transparent';
-        satCtx.shadowBlur=pass===0?10:0;
-        satCtx.strokeStyle='#00ffea';
-        satCtx.lineWidth=pass===0?4:1.5;
-        satCtx.globalAlpha=pass===0?0.25:1.0;
-        for(const[a,b]of SAT_EDGES){satCtx.beginPath();satCtx.moveTo(proj[a][0],proj[a][1]);satCtx.lineTo(proj[b][0],proj[b][1]);satCtx.stroke();}
+        // Aerospace Tait-Bryan Euler (Pitch on X, Heading on Y, Roll on Z)
+        const euler = new THREE.Euler(
+          targetPitch + manualPitchOffset,
+          targetYaw   + manualYawOffset,
+          targetRoll,
+          'YXZ'
+        );
+        satModel.setRotationFromEuler(euler);
       }
-      satCtx.globalAlpha=1.0; satCtx.shadowBlur=0;
-      satCtx.fillStyle='#00ffea';
-      for(let i=0;i<8;i++){satCtx.beginPath();satCtx.arc(proj[i][0],proj[i][1],2.5,0,Math.PI*2);satCtx.fill();}
-      autoYaw+=0.008;
-      requestAnimationFrame(drawSat);
+
+      renderer3D.render(scene3D, camera3D);
     }
-    drawSat();
+    animate3D();
 
     // =====================================================
     // SPARKLINE GRAPH ENGINE
@@ -697,11 +768,13 @@ const char index_html[] PROGMEM = R"rawliteral(
               heading: d.heading
             });
 
-            // 3D satellite
-            livePitch=d.pitch; liveRoll=d.roll;
-            document.getElementById('sat-pitch').innerText=d.pitch.toFixed(1);
-            document.getElementById('sat-roll').innerText=d.roll.toFixed(1);
-            document.getElementById('sat-head').innerText=Math.round(d.heading);
+            // 3D satellite attitude targets (Pitch on X, Roll on Z, Heading on Y)
+            targetPitch = ((d.pitch || 0) * Math.PI) / 180;
+            targetRoll  = ((d.roll  || 0) * Math.PI) / 180;
+            targetYaw   = ((d.heading || 0) * Math.PI) / 180;
+            document.getElementById('sat-pitch').innerText=(d.pitch || 0).toFixed(1);
+            document.getElementById('sat-roll').innerText=(d.roll || 0).toFixed(1);
+            document.getElementById('sat-head').innerText=Math.round(d.heading || 0);
 
             // Dynamics
             document.getElementById('pitch').innerText=d.pitch.toFixed(1);
@@ -784,6 +857,22 @@ void setup() {
   // Serve the main HTML page
   server.on("/", HTTP_GET, []() {
     server.send(200, "text/html", index_html);
+  });
+
+  // Serve 3D Libraries & Model (Gzipped for fast, 100% offline flight loading)
+  server.on("/three.min.js", HTTP_GET, []() {
+    server.sendHeader("Content-Encoding", "gzip");
+    server.send_P(200, "application/javascript", (const char*)three_min_js_gz, three_min_js_gz_len);
+  });
+
+  server.on("/GLTFLoader.js", HTTP_GET, []() {
+    server.sendHeader("Content-Encoding", "gzip");
+    server.send_P(200, "application/javascript", (const char*)gltf_loader_js_gz, gltf_loader_js_gz_len);
+  });
+
+  server.on("/satellite.glb", HTTP_GET, []() {
+    server.sendHeader("Content-Encoding", "gzip");
+    server.send_P(200, "model/gltf-binary", (const char*)satellite_glb_gz, satellite_glb_gz_len);
   });
 
   // Serve live JSON data
