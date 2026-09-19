@@ -1,16 +1,17 @@
 #include <Wire.h>
 #include <Adafruit_Sensor.h>
 #include <Adafruit_MPU6050.h>
-#include <Adafruit_BMP3XX.h>
+#include <Adafruit_BMP280.h>
 #include "DFRobot_BMM350.h"
 #include <ArduinoJson.h>
 
 Adafruit_MPU6050 mpu;
-Adafruit_BMP3XX bmp;                        // Replaces BME688
+Adafruit_BMP280 bmp;                        // BMP280 Barometer (Replaces BMP390)
 DFRobot_BMM350_I2C bmm350(&Wire, 0x14);
 
 // Standard sea-level pressure for altitude calculation (adjust for your location)
 #define SEALEVELPRESSURE_HPA (1013.25)
+bool bmp_status = false;
 
 // RF Module — GPIO 33 (RX) and 32 (TX) are safe on all ESP32 variants
 #define RXD2 32
@@ -23,7 +24,7 @@ void setup() {
   Serial.begin(115200);
   Serial2.begin(9600, SERIAL_8N1, RXD2, TXD2);
   delay(1000);
-  Serial.println("Initializing ESP32 CanSat Transmitter...");
+  Serial.println("Initializing ESP32 CanSat Transmitter (BMP280)...");
 
   Wire.begin(); // SDA = GPIO 21, SCL = GPIO 22
 
@@ -37,19 +38,21 @@ void setup() {
     mpu.setFilterBandwidth(MPU6050_BAND_21_HZ);
   }
 
-  // --- BMP390 (Pressure / Temperature / Altitude Sensor) ---
-  // Try default address 0x77, then alternative 0x76
-  bool bmp_status = bmp.begin_I2C(0x77);
-  if (!bmp_status) bmp_status = bmp.begin_I2C(0x76);
+  // --- BMP280 (Pressure / Temperature / Altitude Sensor) ---
+  // Try default address 0x76 (most common for BMP280 modules), then fallback to 0x77
+  bmp_status = bmp.begin(0x76);
+  if (!bmp_status) bmp_status = bmp.begin(0x77);
 
   if (!bmp_status) {
-    Serial.println("ERROR: BMP390 not found! Check wiring.");
+    Serial.println("ERROR: BMP280 not found! Check wiring / I2C address (0x76/0x77).");
   } else {
-    Serial.println("BMP390 initialized.");
-    bmp.setTemperatureOversampling(BMP3_OVERSAMPLING_8X);
-    bmp.setPressureOversampling(BMP3_OVERSAMPLING_4X);
-    bmp.setIIRFilterCoeff(BMP3_IIR_FILTER_COEFF_3);
-    bmp.setOutputDataRate(BMP3_ODR_50_HZ);
+    Serial.println("BMP280 initialized.");
+    /* Recommended flight/weather sensor settings */
+    bmp.setSampling(Adafruit_BMP280::MODE_NORMAL,     /* Operating Mode. */
+                    Adafruit_BMP280::SAMPLING_X2,     /* Temp. oversampling */
+                    Adafruit_BMP280::SAMPLING_X16,    /* Pressure oversampling */
+                    Adafruit_BMP280::FILTER_X16,      /* Filtering. */
+                    Adafruit_BMP280::STANDBY_MS_500); /* Standby time. */
   }
 
   // --- BMM350 (Magnetometer / Compass) ---
@@ -72,12 +75,15 @@ void loop() {
   pitch = atan2(-a.acceleration.x, sqrt(a.acceleration.y * a.acceleration.y
               + a.acceleration.z * a.acceleration.z)) * 180.0 / PI;
 
-  // --- Read BMP390 ---
+  // --- Read BMP280 ---
   float temperature = 0, pressure = 0, altitude = 0;
-  if (bmp.performReading()) {
-    temperature = bmp.temperature;                         // °C
-    pressure    = bmp.pressure / 100.0;                   // Pa → hPa
-    altitude    = bmp.readAltitude(SEALEVELPRESSURE_HPA); // metres
+  if (bmp_status) {
+    temperature = bmp.readTemperature();                         // °C
+    pressure    = bmp.readPressure() / 100.0F;                   // Pa → hPa
+    altitude    = bmp.readAltitude(SEALEVELPRESSURE_HPA);         // metres
+    if (isnan(temperature)) temperature = 0;
+    if (isnan(pressure)) pressure = 0;
+    if (isnan(altitude)) altitude = 0;
   }
 
   // --- Read BMM350 (for compass heading only) ---

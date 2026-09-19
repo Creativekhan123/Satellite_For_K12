@@ -158,7 +158,7 @@ const char index_html[] PROGMEM = R"rawliteral(
     </div>
 
     <!-- Environment -->
-    <div class="section-title">Environment (BMP-390)</div>
+    <div class="section-title">Environment (BMP-280)</div>
     <div class="card">
       <h3>Temperature</h3>
       <div class="val-container"><div class="val"><span id="temp">--</span><span class="unit">&deg;C</span></div></div>
@@ -376,7 +376,7 @@ const char index_html[] PROGMEM = R"rawliteral(
             pushAndDraw('pitch',d.pitch);
             pushAndDraw('roll',d.roll);
 
-            // Environment (BMP-390)
+            // Environment (BMP-280)
             document.getElementById('temp').innerText=d.temp.toFixed(1);
             document.getElementById('press').innerText=d.press.toFixed(2);
             document.getElementById('alt').innerText=d.alt.toFixed(1);
