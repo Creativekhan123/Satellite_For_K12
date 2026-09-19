@@ -225,6 +225,7 @@ const char index_html[] PROGMEM = R"rawliteral(
       gap:16px;
       font-size:13px;
       flex-wrap:wrap;
+      align-items:center;
     }
     .sat-angles div { color:var(--text-dim); }
     .sat-angles strong { color:var(--accent-color); }
@@ -255,6 +256,64 @@ const char index_html[] PROGMEM = R"rawliteral(
       text-transform: uppercase;
       letter-spacing: 0.5px;
     }
+    /* Fullscreen button */
+    .btn-fullscreen {
+      background: transparent;
+      border: 1px solid var(--border-color);
+      color: var(--text-dim);
+      font-family: inherit;
+      font-size: 16px;
+      line-height: 1;
+      padding: 4px 8px;
+      cursor: pointer;
+      border-radius: 3px;
+      transition: all 0.2s;
+      flex-shrink: 0;
+    }
+    .btn-fullscreen:hover {
+      border-color: var(--accent-color);
+      color: var(--accent-color);
+      box-shadow: 0 0 8px rgba(0,255,234,0.4);
+    }
+    /* Fullscreen overlay: the canvas wrapper becomes fullscreen */
+    .sat-3d-wrapper {
+      position: relative;
+      width: 100%;
+      height: 260px;
+      overflow: hidden;
+    }
+    .sat-3d-wrapper:-webkit-full-screen { height: 100vh; }
+    .sat-3d-wrapper:-moz-full-screen    { height: 100vh; }
+    .sat-3d-wrapper:fullscreen           { height: 100vh; background: #030a16; }
+    /* When fullscreen, canvas fills the wrapper */
+    .sat-3d-wrapper:fullscreen #sat-3d-canvas,
+    .sat-3d-wrapper:-webkit-full-screen #sat-3d-canvas,
+    .sat-3d-wrapper:-moz-full-screen #sat-3d-canvas {
+      width: 100% !important;
+      height: 100% !important;
+    }
+    /* Fullscreen exit hint overlay */
+    #fs-hint {
+      display: none;
+      position: absolute;
+      bottom: 14px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(3,10,22,0.82);
+      border: 1px solid var(--border-color);
+      color: var(--text-dim);
+      font-size: 11px;
+      padding: 5px 12px;
+      border-radius: 4px;
+      pointer-events: none;
+      z-index: 10;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      white-space: nowrap;
+    }
+    .sat-3d-wrapper:fullscreen #fs-hint,
+    .sat-3d-wrapper:-webkit-full-screen #fs-hint,
+    .sat-3d-wrapper:-moz-full-screen #fs-hint { display: block; }
     @media (max-width: 600px) {
       .sat-header {
         flex-direction: column;
@@ -402,14 +461,16 @@ const char index_html[] PROGMEM = R"rawliteral(
           <div>Pitch: <strong><span id="sat-pitch">0.0</span>&deg;</strong></div>
           <div>Roll: <strong><span id="sat-roll">0.0</span>&deg;</strong></div>
           <div>Heading: <strong><span id="sat-head">0</span>&deg;</strong></div>
+          <button class="btn-fullscreen" id="btn-fullscreen" onclick="toggleFullscreen()" title="Fullscreen">&#x26F6;</button>
         </div>
       </div>
-      <div style="position:relative; width:100%; height:260px; overflow:hidden;">
+      <div class="sat-3d-wrapper" id="sat-3d-wrapper">
         <canvas id="sat-3d-canvas" style="width:100%; height:100%; display:block; cursor:grab;"></canvas>
+        <div id="fs-hint">Tap ESC or pinch to exit fullscreen</div>
       </div>
       <div class="sat-footer">
         <div id="sat-mode-badge" class="sat-badge">&#x25CF; TRACKING LIVE ATTITUDE</div>
-        <div class="sat-hint">&#x1F5B1; DRAG TO INSPECT &bull; RELEASE TO SNAP BACK</div>
+        <div class="sat-hint">&#x1F4F1; Drag / Swipe to inspect &bull; Release to snap back &bull; &#x26F6; Fullscreen</div>
       </div>
     </div>
 
@@ -606,39 +667,76 @@ const char index_html[] PROGMEM = R"rawliteral(
       console.warn("Could not load /satellite.glb:", err);
     });
 
-    // Touch & Mouse Drag Controls
-    canvas3D.addEventListener('pointerdown', e => {
+    // ── Drag helpers ──────────────────────────────────────────
+    function startDrag(x, y) {
       isDragging = true;
-      lastPointerX = e.clientX;
-      lastPointerY = e.clientY;
+      lastPointerX = x;
+      lastPointerY = y;
       badge3D.innerText = '◐ USER INSPECTION (RELEASE TO ALIGN)';
       badge3D.style.borderColor = 'var(--warn-color)';
       badge3D.style.color = 'var(--warn-color)';
       canvas3D.style.cursor = 'grabbing';
-    });
-
-    window.addEventListener('pointermove', e => {
+    }
+    function moveDrag(x, y) {
       if (!isDragging) return;
-      const dx = e.clientX - lastPointerX;
-      const dy = e.clientY - lastPointerY;
-      lastPointerX = e.clientX;
-      lastPointerY = e.clientY;
+      const dx = x - lastPointerX;
+      const dy = y - lastPointerY;
+      lastPointerX = x;
+      lastPointerY = y;
+      manualYawOffset   += dx * 0.012;
+      manualPitchOffset += dy * 0.012;
+    }
+    function endDrag() {
+      if (!isDragging) return;
+      isDragging = false;
+      badge3D.innerText = '\u25CF TRACKING LIVE ATTITUDE';
+      badge3D.style.borderColor = 'var(--border-color)';
+      badge3D.style.color = 'var(--accent-color)';
+      canvas3D.style.cursor = 'grab';
+    }
 
-      manualYawOffset   += dx * 0.01;
-      manualPitchOffset += dy * 0.01;
-    });
+    // ── Mouse events ──────────────────────────────────────────
+    canvas3D.addEventListener('mousedown', e => { startDrag(e.clientX, e.clientY); });
+    window.addEventListener('mousemove',   e => { moveDrag(e.clientX, e.clientY); });
+    window.addEventListener('mouseup',     () => endDrag());
 
-    window.addEventListener('pointerup', () => {
-      if (isDragging) {
-        isDragging = false;
-        badge3D.innerText = '● TRACKING LIVE ATTITUDE';
-        badge3D.style.borderColor = 'var(--border-color)';
-        badge3D.style.color = 'var(--accent-color)';
-        canvas3D.style.cursor = 'grab';
+    // ── Touch events (passive:false so we can preventDefault) ─
+    canvas3D.addEventListener('touchstart', e => {
+      e.preventDefault();  // stop scroll hijacking the drag
+      if (e.touches.length === 1) startDrag(e.touches[0].clientX, e.touches[0].clientY);
+    }, { passive: false });
+
+    canvas3D.addEventListener('touchmove', e => {
+      e.preventDefault();
+      if (e.touches.length === 1) moveDrag(e.touches[0].clientX, e.touches[0].clientY);
+    }, { passive: false });
+
+    canvas3D.addEventListener('touchend',    () => endDrag(), { passive: true });
+    canvas3D.addEventListener('touchcancel', () => endDrag(), { passive: true });
+
+    // ── Fullscreen ────────────────────────────────────────────
+    const sat3dWrapper = document.getElementById('sat-3d-wrapper');
+    function toggleFullscreen() {
+      const fsEl = document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement;
+      if (!fsEl) {
+        const req = sat3dWrapper.requestFullscreen || sat3dWrapper.webkitRequestFullscreen || sat3dWrapper.mozRequestFullScreen;
+        if (req) req.call(sat3dWrapper);
+      } else {
+        const ex = document.exitFullscreen || document.webkitExitFullscreen || document.mozCancelFullScreen;
+        if (ex) ex.call(document);
       }
-    });
+    }
+    // Update fullscreen button icon
+    function onFsChange() {
+      const inFs = !!(document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement);
+      document.getElementById('btn-fullscreen').innerText = inFs ? '\u2715' : '\u26F6';
+      setTimeout(resize3D, 80);
+    }
+    document.addEventListener('fullscreenchange',       onFsChange);
+    document.addEventListener('webkitfullscreenchange', onFsChange);
+    document.addEventListener('mozfullscreenchange',    onFsChange);
 
-    // Handle Window Resize
+    // ── Handle Window / Fullscreen Resize ─────────────────────
     function resize3D() {
       const parent = canvas3D.parentElement;
       if (parent && parent.clientWidth > 0 && parent.clientHeight > 0) {
