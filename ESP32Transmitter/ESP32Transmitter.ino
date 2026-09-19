@@ -13,8 +13,8 @@ DFRobot_BMM350_I2C bmm350(&Wire, 0x14);
 #define SEALEVELPRESSURE_HPA (1013.25)
 
 // RF Module — GPIO 33 (RX) and 32 (TX) are safe on all ESP32 variants
-#define RXD2 33
-#define TXD2 32
+#define RXD2 32
+#define TXD2 33
 
 float roll  = 0;
 float pitch = 0;
@@ -113,5 +113,5 @@ void loop() {
   Serial.print("Sending: ");
   Serial.println(output);
 
-  delay(1000);
+  delay(400);
 }
