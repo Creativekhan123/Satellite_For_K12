@@ -762,10 +762,11 @@ const char index_html[] PROGMEM = R"rawliteral(
 
       if (satModel) {
         // Buttery-smooth interpolation towards sensor telemetry targets
+        // lerpAngle() always takes the SHORTEST arc, fixing the 359°→0° wrap-around bug
         const smoothSpeed = 0.08;
-        currentPitch += (targetPitch - currentPitch) * smoothSpeed;
-        currentRoll  += (targetRoll  - currentRoll)  * smoothSpeed;
-        currentYaw    = lerpAngle(currentYaw, targetYaw, smoothSpeed);
+        currentPitch = lerpAngle(currentPitch, targetPitch, smoothSpeed);
+        currentRoll  = lerpAngle(currentRoll,  targetRoll,  smoothSpeed);
+        currentYaw   = lerpAngle(currentYaw,   targetYaw,   smoothSpeed);
 
         // Smoothly spring manual offsets back to zero upon release
         if (!isDragging) {
