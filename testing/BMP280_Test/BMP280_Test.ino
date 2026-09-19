@@ -51,12 +51,27 @@ void setup() {
   }
 
   if (!status) {
-    Serial.println("[ERROR] Could not find a valid BMP280 sensor!");
-    Serial.println("Check wiring:");
-    Serial.println("  - VCC -> 3.3V");
-    Serial.println("  - GND -> GND");
-    Serial.println("  - SDA -> GPIO 21");
-    Serial.println("  - SCL -> GPIO 22");
+    Serial.println("\n[ERROR] Could not find a valid BMP280 sensor at 0x76 or 0x77!");
+    Serial.println("Performing automatic I2C Bus Scan...");
+    byte count = 0;
+    for (byte i = 1; i < 127; i++) {
+      Wire.beginTransmission(i);
+      if (Wire.endTransmission() == 0) {
+        Serial.print("  -> Found I2C device at address: 0x");
+        if (i < 16) Serial.print("0");
+        Serial.println(i, HEX);
+        count++;
+      }
+    }
+    if (count == 0) {
+      Serial.println("  -> No I2C devices detected on the bus at all.");
+      Serial.println("Check hardware wiring:");
+      Serial.println("  - BMP280 VCC -> ESP32 3.3V");
+      Serial.println("  - BMP280 GND -> ESP32 GND");
+      Serial.println("  - BMP280 SDA -> ESP32 GPIO 21");
+      Serial.println("  - BMP280 SCL -> ESP32 GPIO 22");
+    }
+    Serial.println("Halting. Fix wiring and reset.");
     while (1) delay(1000);
   }
 
