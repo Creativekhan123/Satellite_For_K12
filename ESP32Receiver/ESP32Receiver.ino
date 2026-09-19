@@ -292,28 +292,81 @@ const char index_html[] PROGMEM = R"rawliteral(
       width: 100% !important;
       height: 100% !important;
     }
-    /* Fullscreen exit hint overlay */
-    #fs-hint {
+    /* Fullscreen overlay toolbar — shown ONLY when in fullscreen */
+    #fs-overlay {
+      display: none;
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      z-index: 20;
+      padding: 12px 16px;
+      background: linear-gradient(to bottom, rgba(3,10,22,0.92) 0%, transparent 100%);
+      pointer-events: none;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+    .sat-3d-wrapper:fullscreen #fs-overlay,
+    .sat-3d-wrapper:-webkit-full-screen #fs-overlay,
+    .sat-3d-wrapper:-moz-full-screen #fs-overlay { display: flex; }
+    #fs-overlay-title {
+      font-size: 13px;
+      color: var(--accent-color);
+      text-shadow: 0 0 10px rgba(0,255,234,0.5);
+      text-transform: uppercase;
+      letter-spacing: 2px;
+    }
+    #fs-overlay-angles {
+      display: flex;
+      gap: 18px;
+      font-size: 12px;
+      color: var(--text-dim);
+    }
+    #fs-overlay-angles strong { color: var(--accent-color); }
+    #fs-exit-btn {
+      pointer-events: all;
+      background: rgba(3,10,22,0.85);
+      border: 1px solid var(--border-color);
+      color: var(--accent-color);
+      font-family: inherit;
+      font-size: 13px;
+      padding: 6px 14px;
+      cursor: pointer;
+      border-radius: 3px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      transition: all 0.2s;
+    }
+    #fs-exit-btn:hover {
+      background: var(--accent-color);
+      color: #030a16;
+      box-shadow: 0 0 12px rgba(0,255,234,0.6);
+    }
+    /* Bottom mode badge inside fullscreen */
+    #fs-badge {
       display: none;
       position: absolute;
       bottom: 14px;
       left: 50%;
       transform: translateX(-50%);
-      background: rgba(3,10,22,0.82);
-      border: 1px solid var(--border-color);
-      color: var(--text-dim);
       font-size: 11px;
-      padding: 5px 12px;
-      border-radius: 4px;
+      background: rgba(0,255,234,0.1);
+      border: 1px solid var(--border-color);
+      color: var(--accent-color);
+      padding: 5px 14px;
+      border-radius: 3px;
       pointer-events: none;
-      z-index: 10;
+      z-index: 20;
       text-transform: uppercase;
-      letter-spacing: 1px;
+      letter-spacing: 1.5px;
       white-space: nowrap;
     }
-    .sat-3d-wrapper:fullscreen #fs-hint,
-    .sat-3d-wrapper:-webkit-full-screen #fs-hint,
-    .sat-3d-wrapper:-moz-full-screen #fs-hint { display: block; }
+    .sat-3d-wrapper:fullscreen #fs-badge,
+    .sat-3d-wrapper:-webkit-full-screen #fs-badge,
+    .sat-3d-wrapper:-moz-full-screen #fs-badge { display: block; }
     @media (max-width: 600px) {
       .sat-header {
         flex-direction: column;
@@ -466,7 +519,18 @@ const char index_html[] PROGMEM = R"rawliteral(
       </div>
       <div class="sat-3d-wrapper" id="sat-3d-wrapper">
         <canvas id="sat-3d-canvas" style="width:100%; height:100%; display:block; cursor:grab;"></canvas>
-        <div id="fs-hint">Tap ESC or pinch to exit fullscreen</div>
+        <!-- Fullscreen overlay toolbar (top bar) -->
+        <div id="fs-overlay">
+          <div id="fs-overlay-title">&#x1F6F0; CanSat // Live Attitude</div>
+          <div id="fs-overlay-angles">
+            <span>Pitch: <strong id="fs-pitch">0.0</strong>&deg;</span>
+            <span>Roll: <strong id="fs-roll">0.0</strong>&deg;</span>
+            <span>Heading: <strong id="fs-head">0</strong>&deg;</span>
+          </div>
+          <button id="fs-exit-btn" onclick="toggleFullscreen()" title="Exit Fullscreen">&#x2715; Exit Fullscreen</button>
+        </div>
+        <!-- Fullscreen bottom badge -->
+        <div id="fs-badge">&#x25CF; Tracking Live Attitude &bull; Drag to Inspect</div>
       </div>
       <div class="sat-footer">
         <div id="sat-mode-badge" class="sat-badge">&#x25CF; TRACKING LIVE ATTITUDE</div>
@@ -726,15 +790,26 @@ const char index_html[] PROGMEM = R"rawliteral(
         if (ex) ex.call(document);
       }
     }
-    // Update fullscreen button icon
+    // Update fullscreen button icon and sync overlay angles
     function onFsChange() {
       const inFs = !!(document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement);
       document.getElementById('btn-fullscreen').innerText = inFs ? '\u2715' : '\u26F6';
+      document.getElementById('btn-fullscreen').title = inFs ? 'Exit Fullscreen' : 'Fullscreen';
       setTimeout(resize3D, 80);
     }
     document.addEventListener('fullscreenchange',       onFsChange);
     document.addEventListener('webkitfullscreenchange', onFsChange);
     document.addEventListener('mozfullscreenchange',    onFsChange);
+
+    // Keep the fullscreen overlay angles in sync
+    function syncFsOverlay(pitch, roll, heading) {
+      const fp = document.getElementById('fs-pitch');
+      const fr = document.getElementById('fs-roll');
+      const fh = document.getElementById('fs-head');
+      if (fp) fp.innerText = pitch.toFixed(1);
+      if (fr) fr.innerText = roll.toFixed(1);
+      if (fh) fh.innerText = Math.round(heading);
+    }
 
     // ── Handle Window / Fullscreen Resize ─────────────────────
     function resize3D() {
@@ -930,6 +1005,7 @@ const char index_html[] PROGMEM = R"rawliteral(
             document.getElementById('sat-pitch').innerText=(d.pitch || 0).toFixed(1);
             document.getElementById('sat-roll').innerText=(d.roll || 0).toFixed(1);
             document.getElementById('sat-head').innerText=Math.round(d.heading || 0);
+            syncFsOverlay(d.pitch || 0, d.roll || 0, d.heading || 0);
 
             // Dynamics
             document.getElementById('pitch').innerText=d.pitch.toFixed(1);
