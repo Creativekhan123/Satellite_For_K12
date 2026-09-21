@@ -35,18 +35,8 @@ const char index_html[] PROGMEM = R"rawliteral(
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>K12-SAT // Mission Control</title>
-  <script src="/three.min.js"></script>
-  <script src="/GLTFLoader.js"></script>
-  <script>
-    if (typeof THREE === 'undefined') {
-      const s1 = document.createElement('script');
-      s1.src = 'https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js';
-      document.head.appendChild(s1);
-      const s2 = document.createElement('script');
-      s2.src = 'https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js';
-      document.head.appendChild(s2);
-    }
-  </script>
+  <script src="/three.min.js" defer></script>
+  <script src="/GLTFLoader.js" defer></script>
   <style>
     /* Share Tech Mono served locally via fallback chain — no CDN needed in field deployment */
     /* @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap'); */
@@ -995,8 +985,15 @@ const char index_html[] PROGMEM = R"rawliteral(
     const canvas3D  = document.getElementById('sat-3d-canvas');
     const hudCanvas = document.getElementById('pfd-hud-canvas');
     const badge3D   = document.getElementById('sat-mode-badge');
-    const scene3D   = new THREE.Scene();
-    scene3D.background = new THREE.Color(0x030a16);
+
+    let scene3D = null;
+    let camera3D = null;
+    let renderer3D = null;
+    let satModel = null;
+    let targetPitch = 0, targetRoll = 0, targetYaw = 0;
+    let currentPitch = 0, currentRoll = 0, currentYaw = 0;
+    let manualYawOffset = 0, manualPitchOffset = 0;
+    let isDragging = false, lastPointerX = 0, lastPointerY = 0;
 
     let hudEnabled = true;
     function toggleHUD() {
@@ -1015,71 +1012,76 @@ const char index_html[] PROGMEM = R"rawliteral(
       showToast(hudEnabled ? 'PFD Artificial Horizon HUD Active' : 'HUD Disabled', false);
     }
 
-    // ── Star field ────────────────────────────────────────────
-    (function addStarField() {
-      const count = 300;
-      const positions = new Float32Array(count * 3);
-      for (let i = 0; i < count * 3; i++) {
-        positions[i] = (Math.random() - 0.5) * 1200;
+    function init3D() {
+      if (typeof THREE === 'undefined') {
+        setTimeout(init3D, 150);
+        return;
       }
-      const geo = new THREE.BufferGeometry();
-      geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-      const mat = new THREE.PointsMaterial({ color: 0xaaccff, size: 1.2, sizeAttenuation: true, transparent: true, opacity: 0.7 });
-      scene3D.add(new THREE.Points(geo, mat));
-    })();
+      try {
+        scene3D = new THREE.Scene();
+        scene3D.background = new THREE.Color(0x030a16);
 
-    const camera3D = new THREE.PerspectiveCamera(40, (canvas3D.clientWidth || 800) / (canvas3D.clientHeight || 260), 0.1, 2000);
-    const renderer3D = new THREE.WebGLRenderer({ canvas: canvas3D, antialias: true, alpha: true });
-    renderer3D.setSize(canvas3D.clientWidth || 800, canvas3D.clientHeight || 260);
-    renderer3D.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        // Star field
+        const count = 300;
+        const positions = new Float32Array(count * 3);
+        for (let i = 0; i < count * 3; i++) {
+          positions[i] = (Math.random() - 0.5) * 1200;
+        }
+        const geo = new THREE.BufferGeometry();
+        geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+        const mat = new THREE.PointsMaterial({ color: 0xaaccff, size: 1.2, sizeAttenuation: true, transparent: true, opacity: 0.7 });
+        scene3D.add(new THREE.Points(geo, mat));
 
-    // Space Lighting
-    const ambLight = new THREE.AmbientLight(0xffffff, 0.95);
-    scene3D.add(ambLight);
-    const sunLight = new THREE.DirectionalLight(0xffffff, 1.4);
-    sunLight.position.set(200, 300, 150);
-    scene3D.add(sunLight);
-    const rimLight = new THREE.DirectionalLight(0x00ffea, 0.7);
-    rimLight.position.set(-200, -150, -200);
-    scene3D.add(rimLight);
+        camera3D = new THREE.PerspectiveCamera(40, (canvas3D.clientWidth || 800) / (canvas3D.clientHeight || 260), 0.1, 2000);
+        renderer3D = new THREE.WebGLRenderer({ canvas: canvas3D, antialias: true, alpha: true });
+        renderer3D.setSize(canvas3D.clientWidth || 800, canvas3D.clientHeight || 260);
+        renderer3D.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 
-    let satModel = null;
-    let targetPitch = 0;
-    let targetRoll  = 0;
-    let targetYaw   = 0;
-    let currentPitch = 0;
-    let currentRoll  = 0;
-    let currentYaw   = 0;
+        // Space Lighting
+        const ambLight = new THREE.AmbientLight(0xffffff, 0.95);
+        scene3D.add(ambLight);
+        const sunLight = new THREE.DirectionalLight(0xffffff, 1.4);
+        sunLight.position.set(200, 300, 150);
+        scene3D.add(sunLight);
+        const rimLight = new THREE.DirectionalLight(0x00ffea, 0.7);
+        rimLight.position.set(-200, -150, -200);
+        scene3D.add(rimLight);
 
-    let manualYawOffset   = 0;
-    let manualPitchOffset = 0;
-    let isDragging        = false;
-    let lastPointerX = 0, lastPointerY = 0;
+        function loadModel() {
+          if (typeof THREE.GLTFLoader === 'undefined') {
+            setTimeout(loadModel, 150);
+            return;
+          }
+          const loader = new THREE.GLTFLoader();
+          loader.load('/satellite.glb', function(gltf) {
+            satModel = gltf.scene;
 
-    const loader = new THREE.GLTFLoader();
-    loader.load('/satellite.glb', function(gltf) {
-      satModel = gltf.scene;
+            // Auto-center & fit into view
+            const box = new THREE.Box3().setFromObject(satModel);
+            const center = box.getCenter(new THREE.Vector3());
+            const size = box.getSize(new THREE.Vector3());
+            satModel.position.sub(center);
 
-      // Auto-center & fit into view
-      const box = new THREE.Box3().setFromObject(satModel);
-      const center = box.getCenter(new THREE.Vector3());
-      const size = box.getSize(new THREE.Vector3());
-      satModel.position.sub(center);
+            const maxDim = Math.max(size.x, size.y, size.z);
+            const scale = 52.0 / (maxDim || 1);
+            satModel.scale.set(scale, scale, scale);
 
-      const maxDim = Math.max(size.x, size.y, size.z);
-      const scale = 52.0 / (maxDim || 1);
-      satModel.scale.set(scale, scale, scale);
+            camera3D.position.set(0, 22, 90);
+            camera3D.lookAt(0, 0, 0);
 
-      camera3D.position.set(0, 22, 90);
-      camera3D.lookAt(0, 0, 0);
-
-      scene3D.add(satModel);
-    }, undefined, function(err) {
-      console.warn("Could not load /satellite.glb:", err);
-      // Show visible error overlay so the user knows what happened
-      const errEl = document.getElementById('model-error');
-      if (errEl) errEl.classList.add('show');
-    });
+            scene3D.add(satModel);
+          }, undefined, function(err) {
+            console.warn("Could not load /satellite.glb:", err);
+            const errEl = document.getElementById('model-error');
+            if (errEl) errEl.classList.add('show');
+          });
+        }
+        loadModel();
+      } catch (e) {
+        console.warn("3D initialization exception:", e);
+      }
+    }
+    init3D();
 
     // ── Drag helpers ──────────────────────────────────────────
     function startDrag(x, y) {
@@ -1211,9 +1213,11 @@ const char index_html[] PROGMEM = R"rawliteral(
     function resize3D() {
       const parent = canvas3D.parentElement;
       if (parent && parent.clientWidth > 0 && parent.clientHeight > 0) {
-        camera3D.aspect = parent.clientWidth / parent.clientHeight;
-        camera3D.updateProjectionMatrix();
-        renderer3D.setSize(parent.clientWidth, parent.clientHeight);
+        if (camera3D && renderer3D) {
+          camera3D.aspect = parent.clientWidth / parent.clientHeight;
+          camera3D.updateProjectionMatrix();
+          renderer3D.setSize(parent.clientWidth, parent.clientHeight);
+        }
         if (hudCanvas) {
           hudCanvas.width = parent.clientWidth;
           hudCanvas.height = parent.clientHeight;
@@ -1443,7 +1447,9 @@ const char index_html[] PROGMEM = R"rawliteral(
         satModel.setRotationFromEuler(euler);
       }
 
-      renderer3D.render(scene3D, camera3D);
+      if (renderer3D && scene3D && camera3D) {
+        renderer3D.render(scene3D, camera3D);
+      }
 
       // Render PFD Artificial Horizon HUD synchronized with 3D model & user inspection
       const dispPitchDeg = ((currentPitch + manualPitchOffset) * 180) / Math.PI;
@@ -2054,24 +2060,37 @@ void setup() {
   // Captive Portal DNS — any domain → ESP32
   dnsServer.start(DNS_PORT, "*", WiFi.softAPIP());
 
-  // Serve the main HTML page
-  server.on("/", HTTP_GET, []() {
-    server.send(200, "text/html", index_html);
-  });
+  auto handleRoot = []() {
+    server.sendHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+    server.send_P(200, "text/html", index_html, sizeof(index_html) - 1);
+  };
+
+  // Serve the main HTML page (using send_P directly from PROGMEM to avoid 75KB RAM allocation)
+  server.on("/", HTTP_GET, handleRoot);
+  server.on("/index.html", HTTP_GET, handleRoot);
+  server.on("/generate_204", HTTP_GET, handleRoot);        // Android captive portal
+  server.on("/gen_204", HTTP_GET, handleRoot);             // Android captive portal
+  server.on("/hotspot-detect.html", HTTP_GET, handleRoot); // Apple/iOS captive portal
+  server.on("/canonical.html", HTTP_GET, handleRoot);      // Android captive portal
+  server.on("/connecttest.txt", HTTP_GET, handleRoot);     // Windows captive portal
+  server.on("/ncsi.txt", HTTP_GET, handleRoot);            // Windows captive portal
 
   // Serve 3D Libraries & Model (Gzipped for fast, 100% offline flight loading)
   server.on("/three.min.js", HTTP_GET, []() {
     server.sendHeader("Content-Encoding", "gzip");
+    server.sendHeader("Cache-Control", "max-age=86400");
     server.send_P(200, "application/javascript", (const char*)three_min_js_gz, three_min_js_gz_len);
   });
 
   server.on("/GLTFLoader.js", HTTP_GET, []() {
     server.sendHeader("Content-Encoding", "gzip");
+    server.sendHeader("Cache-Control", "max-age=86400");
     server.send_P(200, "application/javascript", (const char*)gltf_loader_js_gz, gltf_loader_js_gz_len);
   });
 
   server.on("/satellite.glb", HTTP_GET, []() {
     server.sendHeader("Content-Encoding", "gzip");
+    server.sendHeader("Cache-Control", "max-age=86400");
     server.send_P(200, "model/gltf-binary", (const char*)satellite_glb_gz, satellite_glb_gz_len);
   });
 
@@ -2097,10 +2116,16 @@ void setup() {
     server.send(200, "text/plain", "OK");
   });
 
-  // Redirect any other URL to dashboard (captive portal)
+  // Redirect or serve on captive portal
   server.onNotFound([]() {
-    server.sendHeader("Location", String("http://") + WiFi.softAPIP().toString(), true);
-    server.send(302, "text/plain", "");
+    String uri = server.uri();
+    if (uri.endsWith(".html") || uri.endsWith(".htm") || uri == "/" || uri.indexOf("generate_204") >= 0 || uri.indexOf("hotspot") >= 0) {
+      server.sendHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+      server.send_P(200, "text/html", index_html, sizeof(index_html) - 1);
+    } else {
+      server.sendHeader("Location", String("http://") + WiFi.softAPIP().toString(), true);
+      server.send(302, "text/plain", "");
+    }
   });
 
   server.begin();
