@@ -787,8 +787,8 @@ const char index_html[] PROGMEM = R"rawliteral(
         <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
           <!-- Packet Waterfall: last 40 packets (green=ok, red=dropped) -->
           <div id="pkt-waterfall" title="Packet waterfall — green: received │ red: dropped"></div>
-          <button id="btn-audio-toggle" class="action-btn audio-btn" onclick="toggleAudio()" title="Toggle Comms Audio & Voice Alerts">
-            <span id="audio-icon">🔇</span> <span id="audio-label">AUDIO: OFF</span>
+          <button id="btn-audio-toggle" class="action-btn audio-btn active" onclick="toggleAudio()" title="Toggle Comms Audio &amp; Voice Alerts">
+            <span id="audio-icon">🔊</span> <span id="audio-label">AUDIO: ACTIVE</span>
           </button>
           <button class="action-btn" onclick="exportCSV()">💾 Export Flight CSV</button>
         </div>
@@ -1633,9 +1633,24 @@ const char index_html[] PROGMEM = R"rawliteral(
     // COMMS AUDIO & VOICE SYNTHESIS ENGINE (Web Audio API)
     // =====================================================
     let audioCtx = null;
-    let audioEnabled = false;
+    let audioEnabled = true;  // ON by default
     let lastTumbleAlertTime = 0;
     let lastVoiceTime = 0;
+
+    // ── First-touch audio unlock (required on Android/iOS/mobile browsers) ──
+    // Browsers block AudioContext until first user gesture. This silently
+    // unlocks it on the first tap/click anywhere on the page.
+    let audioUnlocked = false;
+    function unlockAudioOnFirstTouch() {
+      if (audioUnlocked) return;
+      audioUnlocked = true;
+      initAudio();
+      // Hide the tap-to-activate banner
+      const banner = document.getElementById('audio-unlock-banner');
+      if (banner) banner.style.display = 'none';
+    }
+    document.addEventListener('touchstart', unlockAudioOnFirstTouch, { once: true, passive: true });
+    document.addEventListener('click',      unlockAudioOnFirstTouch, { once: true });
 
     function initAudio() {
       if (!audioCtx) {
@@ -2134,6 +2149,17 @@ const char index_html[] PROGMEM = R"rawliteral(
   </script>
   <!-- Toast element (global, always in DOM) -->
   <div id="toast"></div>
+
+  <!-- Mobile audio unlock banner: shown on load, hides on first tap -->
+  <div id="audio-unlock-banner" style="
+    position:fixed; bottom:70px; left:50%; transform:translateX(-50%);
+    background:rgba(10,25,46,0.95); border:1px solid var(--accent-color);
+    color:var(--accent-color); font-family:inherit; font-size:11px;
+    letter-spacing:1.5px; text-transform:uppercase; padding:8px 20px;
+    border-radius:4px; pointer-events:none; z-index:9998;
+    text-align:center; animation:blink 1.5s infinite; white-space:nowrap;
+  ">&#x1F50A; Tap anywhere to activate audio</div>
+
 
   <!-- RF Link Loss Diagnostics Modal -->
   <div id="diag-modal-backdrop" class="diag-modal-backdrop" onclick="if(event.target===this)toggleDiagModal()">
