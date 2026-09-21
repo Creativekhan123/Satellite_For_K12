@@ -32,7 +32,7 @@ const char index_html[] PROGMEM = R"rawliteral(
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>CanSat // Mission Control</title>
+  <title>K12-SAT // Mission Control</title>
   <script src="/three.min.js"></script>
   <script src="/GLTFLoader.js"></script>
   <script>
@@ -528,7 +528,7 @@ const char index_html[] PROGMEM = R"rawliteral(
     <!-- Header -->
     <div class="header">
       <div class="header-top">
-        <h1>CanSat // Mission Control</h1>
+        <h1>K12-SAT // Mission Control</h1>
         <div class="status-indicator" id="status-indicator">
           <div class="dot" id="status-dot"></div>
           <span id="status-text">LINK ACTIVE</span>
