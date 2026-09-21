@@ -24,6 +24,7 @@ WebServer server(80);
 // Default JSON — temp, press, alt, roll, pitch, heading
 String latestJson = "{\"temp\":0,\"press\":0,\"alt\":0,\"roll\":0,\"pitch\":0,\"heading\":0}";
 unsigned long lastRxTime = 0;
+const unsigned long LINK_TIMEOUT_MS = 180000; // 3 minutes (180,000 ms) silence timeout
 float baselineAltitude = -999999.0;
 bool baselineCaptured = false;
 
@@ -1752,8 +1753,13 @@ const char index_html[] PROGMEM = R"rawliteral(
 
     // =====================================================
     // TELEMETRY INGEST & SPACE-AGENCY WATCHDOG (every 400ms)
+    // 3-Minute (180,000 ms) Silence Watchdog Rule:
+    // Only trigger link loss after 3 full minutes of no packets.
+    // If any packet arrives in between, reset timer & NEVER trigger lost logic.
     // =====================================================
+    const LINK_TIMEOUT_MS = 180000; // 3 minutes (180,000 ms)
     var linkLostStartTime = null;
+    var lastSuccessfulPacketTime = Date.now();
     var lastKnownSnapshot = {
       alt: '-- m',
       vspeed: '-- m/s',
@@ -1763,7 +1769,28 @@ const char index_html[] PROGMEM = R"rawliteral(
     };
     window.lastKnownSnapshot = lastKnownSnapshot;
 
-    function handleLinkLoss() {
+    function formatDuration(ms) {
+      const totalSec = Math.floor(ms / 1000);
+      const mins = Math.floor(totalSec / 60);
+      const secs = totalSec % 60;
+      const tenths = Math.floor((ms % 1000) / 100);
+      if (mins > 0) {
+        return `+${mins}m ${secs.toString().padStart(2, '0')}.${tenths}s`;
+      }
+      return `+${secs}.${tenths}s`;
+    }
+
+    function formatDurationSpoken(ms) {
+      const totalSec = Math.round(ms / 1000);
+      const mins = Math.floor(totalSec / 60);
+      const secs = totalSec % 60;
+      if (mins > 0) {
+        return `${mins} minute${mins > 1 ? 's' : ''} ${secs} second${secs !== 1 ? 's' : ''}`;
+      }
+      return `${secs} seconds`;
+    }
+
+    function handleLinkLoss(silenceMs) {
       const dot = document.getElementById('status-dot');
       const indicator = document.getElementById('status-indicator');
       const text = document.getElementById('status-text');
@@ -1776,9 +1803,14 @@ const char index_html[] PROGMEM = R"rawliteral(
       const pktRate = document.getElementById('pkt-rate');
       if (pktRate) pktRate.innerText = '0.0';
 
+      const currentSilence = (typeof silenceMs === 'number' && silenceMs > 0)
+        ? silenceMs
+        : (Date.now() - lastSuccessfulPacketTime);
+
       if (!window._linkWasLost) {
         window._linkWasLost = true;
-        linkLostStartTime = Date.now();
+        // Anchor the loss start time to the actual beginning of signal silence
+        linkLostStartTime = Date.now() - currentSilence;
 
         // Hologram red wireframe ghost for 3D model
         setHologramGhost(true);
@@ -1797,7 +1829,7 @@ const char index_html[] PROGMEM = R"rawliteral(
         const silStat = document.getElementById('silence-stat');
         if (silStat) silStat.style.display = 'block';
 
-        showToast('\u26A0\uFE0F RF Link Lost // Re-acquiring...', true);
+        showToast('\u26A0\uFE0F RF Link Lost (>3 min silence) // Re-acquiring...', true);
         if (navigator.vibrate) navigator.vibrate([250, 100, 250, 100, 250]);
         playKlaxonAlarm();
         speakVoice("Warning: Telemetry carrier lost. Loss of signal.");
@@ -1805,8 +1837,8 @@ const char index_html[] PROGMEM = R"rawliteral(
 
       // Live silence stopwatch
       if (linkLostStartTime) {
-        const elapsed = ((Date.now() - linkLostStartTime) / 1000).toFixed(1);
-        const timeStr = '+' + elapsed + 's';
+        const totalElapsedMs = Date.now() - linkLostStartTime;
+        const timeStr = formatDuration(totalElapsedMs);
         const silSec = document.getElementById('silence-sec');
         if (silSec) silSec.innerText = timeStr;
         const losTime = document.getElementById('los-time');
@@ -1814,6 +1846,29 @@ const char index_html[] PROGMEM = R"rawliteral(
       }
     }
     window.handleLinkLoss = handleLinkLoss;
+
+    function restoreLink(silenceMs) {
+      const blackoutMs = linkLostStartTime ? (Date.now() - linkLostStartTime) : (silenceMs || 180000);
+      const blackoutSpoken = formatDurationSpoken(blackoutMs);
+      const blackoutDisplay = formatDuration(blackoutMs).replace('+', '');
+
+      window._linkWasLost = false;
+      linkLostStartTime = null;
+
+      // Restore realistic 3D materials
+      setHologramGhost(false);
+
+      // Hide LOS overlay & silence stats
+      const losOverlay = document.getElementById('los-overlay');
+      if (losOverlay) losOverlay.classList.remove('show');
+      const silStat = document.getElementById('silence-stat');
+      if (silStat) silStat.style.display = 'none';
+
+      playChime([440, 554, 659]);
+      speakVoice(`Telemetry link restored. Blackout duration ${blackoutSpoken}.`);
+      showToast(`Telemetry Link Restored (Blackout: ${blackoutDisplay})`, false);
+    }
+    window.restoreLink = restoreLink;
 
     setInterval(()=>{
       fetch('/data')
@@ -1825,6 +1880,7 @@ const char index_html[] PROGMEM = R"rawliteral(
           const grid = document.getElementById('data-grid');
 
           if (d.connected) {
+            lastSuccessfulPacketTime = Date.now();
             dot.className = 'dot';
             indicator.className = 'status-indicator';
             text.innerText = 'LINK ACTIVE';
@@ -1833,22 +1889,7 @@ const char index_html[] PROGMEM = R"rawliteral(
             // Audio telemetry pulse & link restoration
             playPacketChirp();
             if (window._linkWasLost) {
-              const blackoutSec = linkLostStartTime ? ((Date.now() - linkLostStartTime) / 1000).toFixed(1) : '0.0';
-              window._linkWasLost = false;
-              linkLostStartTime = null;
-
-              // Restore realistic 3D materials
-              setHologramGhost(false);
-
-              // Hide LOS overlay & silence stats
-              const losOverlay = document.getElementById('los-overlay');
-              if (losOverlay) losOverlay.classList.remove('show');
-              const silStat = document.getElementById('silence-stat');
-              if (silStat) silStat.style.display = 'none';
-
-              playChime([440, 554, 659]);
-              speakVoice(`Telemetry link restored. Blackout duration ${blackoutSec} seconds.`);
-              showToast(`Telemetry Link Restored (Blackout: ${blackoutSec}s)`, false);
+              restoreLink(d.silence_ms);
             }
 
             // Packet tracking
@@ -2001,11 +2042,17 @@ const char index_html[] PROGMEM = R"rawliteral(
               head: Math.round(d.heading || 0) + '° (' + hLabel + ')'
             };
           } else {
-            handleLinkLoss();
+            // ESP32 confirmed no RF packets received for > 3 minutes (180,000 ms)
+            handleLinkLoss(d.silence_ms || (Date.now() - lastSuccessfulPacketTime));
           }
         })
         .catch(()=>{
-          handleLinkLoss();
+          // Transient Wi-Fi poll hiccup — DO NOT immediately trigger lost logic!
+          // Only trigger if no valid packets have been received for 3 full minutes (180,000 ms)
+          const silence = Date.now() - lastSuccessfulPacketTime;
+          if (silence >= LINK_TIMEOUT_MS) {
+            handleLinkLoss(silence);
+          }
         });
     }, 400);
   </script>
@@ -2048,6 +2095,7 @@ void setup() {
   delay(100);
   Serial.begin(115200);
   Serial2.begin(9600, SERIAL_8N1, RXD2, TXD2);
+  Serial2.setTimeout(50); // Snappy 50ms read timeout prevents blocking web server loop
 
   Serial.println("\nInitializing ESP32 Receiver Dashboard...");
 
@@ -2096,12 +2144,16 @@ void setup() {
 
   // Serve live JSON data
   server.on("/data", HTTP_GET, []() {
-    bool isConnected = (millis() - lastRxTime) < 3000;
+    unsigned long nowMs = millis();
+    unsigned long silenceMs = (lastRxTime == 0) ? nowMs : (nowMs - lastRxTime);
+    bool isConnected = (silenceMs < LINK_TIMEOUT_MS);
+
     String response = latestJson;
-    // Strip the last '}' and add the connected status and baseline altitude
+    // Strip the last '}' and add the connected status, silence duration, and baseline altitude
     if (response.endsWith("}")) {
       response = response.substring(0, response.length() - 1);
       response += ",\"connected\":" + String(isConnected ? "true" : "false");
+      response += ",\"silence_ms\":" + String(silenceMs);
       if (baselineCaptured) {
         response += ",\"base_alt\":" + String(baselineAltitude, 1);
       }
