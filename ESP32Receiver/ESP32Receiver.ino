@@ -257,24 +257,52 @@ const char index_html[] PROGMEM = R"rawliteral(
       text-transform: uppercase;
       letter-spacing: 0.5px;
     }
-    /* Fullscreen button */
-    .btn-fullscreen {
+    /* Fullscreen & HUD buttons */
+    .btn-fullscreen, .btn-hud {
       background: transparent;
       border: 1px solid var(--border-color);
       color: var(--text-dim);
       font-family: inherit;
-      font-size: 16px;
+      font-size: 11px;
       line-height: 1;
-      padding: 4px 8px;
+      padding: 5px 9px;
       cursor: pointer;
       border-radius: 3px;
       transition: all 0.2s;
       flex-shrink: 0;
+      text-transform: uppercase;
+      letter-spacing: 1px;
     }
-    .btn-fullscreen:hover {
+    .btn-fullscreen { font-size: 15px; padding: 4px 8px; }
+    .btn-fullscreen:hover, .btn-hud:hover {
       border-color: var(--accent-color);
       color: var(--accent-color);
       box-shadow: 0 0 8px rgba(0,255,234,0.4);
+    }
+    .btn-hud.active {
+      border-color: var(--accent-color);
+      color: var(--accent-color);
+      background: rgba(0,255,234,0.12);
+      box-shadow: 0 0 8px rgba(0,255,234,0.35);
+    }
+    /* Audio button in mission bar */
+    .audio-btn {
+      border-color: var(--border-color);
+      color: var(--text-dim);
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      transition: all 0.3s ease;
+    }
+    .audio-btn.active {
+      border-color: var(--accent-color);
+      color: var(--accent-color);
+      background: rgba(0, 255, 234, 0.12);
+      box-shadow: 0 0 10px rgba(0, 255, 234, 0.4);
+    }
+    .audio-btn:hover {
+      border-color: var(--accent-color);
+      color: var(--accent-color);
     }
     /* Fullscreen overlay: the canvas wrapper becomes fullscreen */
     .sat-3d-wrapper {
@@ -282,6 +310,15 @@ const char index_html[] PROGMEM = R"rawliteral(
       width: 100%;
       height: 380px;
       overflow: hidden;
+    }
+    /* PFD Artificial Horizon HUD Canvas */
+    #pfd-hud-canvas {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      z-index: 4;
     }
     /* 3D model load error overlay */
     #model-error {
@@ -308,7 +345,10 @@ const char index_html[] PROGMEM = R"rawliteral(
     /* When fullscreen, canvas fills the wrapper */
     .sat-3d-wrapper:fullscreen #sat-3d-canvas,
     .sat-3d-wrapper:-webkit-full-screen #sat-3d-canvas,
-    .sat-3d-wrapper:-moz-full-screen #sat-3d-canvas {
+    .sat-3d-wrapper:-moz-full-screen #sat-3d-canvas,
+    .sat-3d-wrapper:fullscreen #pfd-hud-canvas,
+    .sat-3d-wrapper:-webkit-full-screen #pfd-hud-canvas,
+    .sat-3d-wrapper:-moz-full-screen #pfd-hud-canvas {
       width: 100% !important;
       height: 100% !important;
     }
@@ -542,7 +582,10 @@ const char index_html[] PROGMEM = R"rawliteral(
           <div>Packets: <strong id="pkt-count">0</strong></div>
           <div>Rate: <strong id="pkt-rate">0.0</strong> Hz</div>
         </div>
-        <div>
+        <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+          <button id="btn-audio-toggle" class="action-btn audio-btn" onclick="toggleAudio()" title="Toggle Comms Audio & Voice Alerts">
+            <span id="audio-icon">🔇</span> <span id="audio-label">AUDIO: OFF</span>
+          </button>
           <button class="action-btn" onclick="exportCSV()">💾 Export Flight CSV</button>
         </div>
       </div>
@@ -556,29 +599,34 @@ const char index_html[] PROGMEM = R"rawliteral(
           <div>Pitch: <strong><span id="sat-pitch">0.0</span>&deg;</strong></div>
           <div>Roll: <strong><span id="sat-roll">0.0</span>&deg;</strong></div>
           <div>Heading: <strong><span id="sat-head">0</span>&deg;</strong></div>
+          <button class="btn-hud active" id="btn-hud-toggle" onclick="toggleHUD()" title="Toggle Artificial Horizon HUD">✈ HUD: ON</button>
           <button class="btn-fullscreen" id="btn-fullscreen" onclick="toggleFullscreen()" title="Fullscreen">&#x26F6;</button>
         </div>
       </div>
       <div class="sat-3d-wrapper" id="sat-3d-wrapper">
         <canvas id="sat-3d-canvas" style="width:100%; height:100%; display:block; cursor:grab;"></canvas>
+        <canvas id="pfd-hud-canvas"></canvas>
         <!-- Model load error overlay -->
         <div id="model-error"><span>&#x26A0;</span>3D Model Failed to Load<br><small style="font-size:11px;color:#8ba9c9;">Check flash storage or re-upload firmware</small></div>
         <!-- Fullscreen overlay toolbar (top bar) -->
         <div id="fs-overlay">
-          <div id="fs-overlay-title">&#x1F6F0; CanSat // Live Attitude</div>
+          <div id="fs-overlay-title">&#x1F6F0; K12-SAT // Live Attitude</div>
           <div id="fs-overlay-angles">
             <span>Pitch: <strong id="fs-pitch">0.0</strong>&deg;</span>
             <span>Roll: <strong id="fs-roll">0.0</strong>&deg;</span>
             <span>Heading: <strong id="fs-head">0</strong>&deg;</span>
           </div>
-          <button id="fs-exit-btn" onclick="toggleFullscreen()" title="Exit Fullscreen">&#x2715; Exit Fullscreen</button>
+          <div style="display:flex; gap:8px; align-items:center; pointer-events:all;">
+            <button id="fs-hud-btn" class="action-btn secondary" onclick="toggleHUD()">HUD: ON</button>
+            <button id="fs-exit-btn" onclick="toggleFullscreen()" title="Exit Fullscreen">&#x2715; Exit Fullscreen</button>
+          </div>
         </div>
         <!-- Fullscreen bottom badge -->
         <div id="fs-badge">&#x25CF; Tracking Live Attitude &bull; Drag to Inspect</div>
       </div>
       <div class="sat-footer">
         <div id="sat-mode-badge" class="sat-badge">&#x25CF; TRACKING LIVE ATTITUDE</div>
-        <div class="sat-hint">&#x1F4F1; Drag / Swipe to inspect &bull; Release to snap back &bull; &#x26F6; Fullscreen</div>
+        <div class="sat-hint">&#x1F4F1; Drag / Swipe to inspect &bull; ✈ Toggle HUD &bull; &#x26F6; Fullscreen</div>
       </div>
     </div>
 
@@ -707,6 +755,8 @@ const char index_html[] PROGMEM = R"rawliteral(
       maxAltitude = -9999;
       minTemp = 9999; maxTemp = -9999;
       minPress = 9999; maxPress = -9999;
+      if (audioEnabled) speakVoice("Mission elapsed time reset.");
+      showToast("Mission Clock Reset", false);
     }
 
     // ── Toast notification (replaces alert()) ─────────────────
@@ -734,7 +784,7 @@ const char index_html[] PROGMEM = R"rawliteral(
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = 'cansat_telemetry_' + new Date().toISOString().slice(0,19).replace(/[:T]/g,'_') + '.csv';
+      a.download = 'k12sat_telemetry_' + new Date().toISOString().slice(0,19).replace(/[:T]/g,'_') + '.csv';
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
@@ -743,12 +793,30 @@ const char index_html[] PROGMEM = R"rawliteral(
     }
 
     // =====================================================
-    // REAL-TIME 3D SATELLITE ENGINE (Three.js + GLTF)
+    // REAL-TIME 3D SATELLITE & PFD HUD ENGINE
     // =====================================================
-    const canvas3D = document.getElementById('sat-3d-canvas');
-    const badge3D  = document.getElementById('sat-mode-badge');
-    const scene3D  = new THREE.Scene();
+    const canvas3D  = document.getElementById('sat-3d-canvas');
+    const hudCanvas = document.getElementById('pfd-hud-canvas');
+    const badge3D   = document.getElementById('sat-mode-badge');
+    const scene3D   = new THREE.Scene();
     scene3D.background = new THREE.Color(0x030a16);
+
+    let hudEnabled = true;
+    function toggleHUD() {
+      hudEnabled = !hudEnabled;
+      const btns = [document.getElementById('btn-hud-toggle'), document.getElementById('fs-hud-btn')];
+      btns.forEach(b => {
+        if (b) {
+          b.innerText = hudEnabled ? '✈ HUD: ON' : '✈ HUD: OFF';
+          b.classList.toggle('active', hudEnabled);
+        }
+      });
+      if (!hudEnabled && hudCanvas) {
+        const ctx = hudCanvas.getContext('2d');
+        ctx.clearRect(0, 0, hudCanvas.width, hudCanvas.height);
+      }
+      showToast(hudEnabled ? 'PFD Artificial Horizon HUD Active' : 'HUD Disabled', false);
+    }
 
     // ── Star field ────────────────────────────────────────────
     (function addStarField() {
@@ -903,6 +971,10 @@ const char index_html[] PROGMEM = R"rawliteral(
         camera3D.aspect = parent.clientWidth / parent.clientHeight;
         camera3D.updateProjectionMatrix();
         renderer3D.setSize(parent.clientWidth, parent.clientHeight);
+        if (hudCanvas) {
+          hudCanvas.width = parent.clientWidth;
+          hudCanvas.height = parent.clientHeight;
+        }
       }
     }
     window.addEventListener('resize', resize3D);
@@ -914,6 +986,190 @@ const char index_html[] PROGMEM = R"rawliteral(
       if (diff < -Math.PI) diff += Math.PI * 2;
       if (diff > Math.PI)  diff -= Math.PI * 2;
       return cur + diff * alpha;
+    }
+
+    // ── PFD Artificial Horizon HUD Drawing Engine ─────────────
+    function drawHUD(pitch, roll, heading) {
+      if (!hudEnabled || !hudCanvas) return;
+      if (hudCanvas.width !== hudCanvas.clientWidth || hudCanvas.height !== hudCanvas.clientHeight) {
+        hudCanvas.width = hudCanvas.clientWidth;
+        hudCanvas.height = hudCanvas.clientHeight;
+      }
+      const ctx = hudCanvas.getContext('2d');
+      const W = hudCanvas.width, H = hudCanvas.height;
+      ctx.clearRect(0, 0, W, H);
+
+      const cx = W / 2;
+      const cy = H / 2;
+      const pitchScale = 3.2; // pixels per degree
+      const hudColor = 'rgba(0, 255, 234, 0.88)';
+      const hudDim   = 'rgba(0, 255, 234, 0.35)';
+
+      ctx.save();
+
+      // 1. Center Boresight Aircraft Reticle (Fixed to screen center)
+      ctx.strokeStyle = '#00ffea';
+      ctx.lineWidth = 2;
+      ctx.shadowColor = '#00ffea';
+      ctx.shadowBlur = 6;
+      ctx.beginPath();
+      ctx.arc(cx, cy, 3, 0, Math.PI * 2);
+      ctx.fillStyle = '#00ffea';
+      ctx.fill();
+      ctx.beginPath();
+      ctx.moveTo(cx - 30, cy); ctx.lineTo(cx - 10, cy);
+      ctx.moveTo(cx + 10, cy); ctx.lineTo(cx + 30, cy);
+      ctx.moveTo(cx, cy - 4); ctx.lineTo(cx, cy - 10);
+      ctx.stroke();
+      ctx.shadowBlur = 0;
+
+      // 2. Roll Arc at Top
+      const arcR = Math.min(W, H) * 0.38;
+      const arcTopY = cy;
+      ctx.strokeStyle = hudDim;
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.arc(cx, arcTopY, arcR, -Math.PI / 2 - Math.PI / 3, -Math.PI / 2 + Math.PI / 3);
+      ctx.stroke();
+
+      // Roll ticks: 0, ±10, ±20, ±30, ±45, ±60
+      const rollTicks = [-60, -45, -30, -20, -10, 0, 10, 20, 30, 45, 60];
+      rollTicks.forEach(deg => {
+        const rad = (-90 + deg) * Math.PI / 180;
+        const isMajor = deg === 0 || Math.abs(deg) === 30 || Math.abs(deg) === 60;
+        const tLen = isMajor ? 9 : 5;
+        const x1 = cx + Math.cos(rad) * arcR;
+        const y1 = arcTopY + Math.sin(rad) * arcR;
+        const x2 = cx + Math.cos(rad) * (arcR + tLen);
+        const y2 = arcTopY + Math.sin(rad) * (arcR + tLen);
+        ctx.beginPath();
+        ctx.moveTo(x1, y1); ctx.lineTo(x2, y2);
+        ctx.strokeStyle = isMajor ? '#00ffea' : hudDim;
+        ctx.stroke();
+      });
+
+      // Roll Pointer (rotates with roll around top arc)
+      const curRollRad = (-90 + roll) * Math.PI / 180;
+      const ptrX = cx + Math.cos(curRollRad) * (arcR - 2);
+      const ptrY = arcTopY + Math.sin(curRollRad) * (arcR - 2);
+      ctx.save();
+      ctx.translate(ptrX, ptrY);
+      ctx.rotate(curRollRad + Math.PI / 2);
+      ctx.beginPath();
+      ctx.moveTo(0, 0);
+      ctx.lineTo(-5, -8);
+      ctx.lineTo(5, -8);
+      ctx.closePath();
+      ctx.fillStyle = '#00ffea';
+      ctx.shadowColor = '#00ffea'; ctx.shadowBlur = 8;
+      ctx.fill();
+      ctx.restore();
+
+      // Roll readout above arc
+      ctx.font = '11px Share Tech Mono, monospace';
+      ctx.fillStyle = '#00ffea';
+      ctx.textAlign = 'center';
+      ctx.fillText(`BANK ${roll >= 0 ? '+' : ''}${roll.toFixed(1)}°`, cx, arcTopY - arcR - 12);
+
+      // 3. Pitch Ladder & Horizon (Rotates with -Roll and translates with Pitch)
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(cx - 180, cy - 130, 360, 260);
+      ctx.clip();
+
+      ctx.translate(cx, cy);
+      ctx.rotate(-roll * Math.PI / 180);
+      ctx.translate(0, pitch * pitchScale);
+
+      // Horizon line (Pitch 0°)
+      ctx.strokeStyle = '#00ffea';
+      ctx.lineWidth = 2;
+      ctx.shadowColor = '#00ffea'; ctx.shadowBlur = 6;
+      ctx.beginPath();
+      ctx.moveTo(-150, 0); ctx.lineTo(-38, 0);
+      ctx.moveTo(38, 0);  ctx.lineTo(150, 0);
+      ctx.moveTo(-150, 0); ctx.lineTo(-150, 6);
+      ctx.moveTo(150, 0);  ctx.lineTo(150, 6);
+      ctx.stroke();
+      ctx.shadowBlur = 0;
+
+      ctx.font = '10px Share Tech Mono, monospace';
+      ctx.fillStyle = '#00ffea';
+      ctx.textAlign = 'right';
+      ctx.fillText('00', -42, 3);
+      ctx.textAlign = 'left';
+      ctx.fillText('00', 42, 3);
+
+      // Pitch rungs: ±10°, ±20°, ±30°, ±40°, ±50°, ±60°
+      for (let d = -60; d <= 60; d += 10) {
+        if (d === 0) continue;
+        const y = -d * pitchScale;
+        const isUp = d > 0;
+        const w = 42;
+        const gap = 18;
+        const tab = isUp ? 5 : -5;
+
+        ctx.beginPath();
+        if (!isUp) ctx.setLineDash([3, 3]);
+        else ctx.setLineDash([]);
+
+        ctx.strokeStyle = isUp ? hudColor : 'rgba(255, 184, 77, 0.85)';
+        ctx.lineWidth = 1.4;
+
+        ctx.moveTo(-w - gap, y);
+        ctx.lineTo(-gap, y);
+        ctx.lineTo(-gap, y + tab);
+
+        ctx.moveTo(gap, y + tab);
+        ctx.lineTo(gap, y);
+        ctx.lineTo(w + gap, y);
+        ctx.stroke();
+
+        ctx.setLineDash([]);
+        ctx.fillStyle = isUp ? hudColor : 'rgba(255, 184, 77, 0.85)';
+        ctx.textAlign = 'right';
+        ctx.fillText(Math.abs(d).toString(), -gap - w - 4, y + 3);
+        ctx.textAlign = 'left';
+        ctx.fillText(Math.abs(d).toString(), gap + w + 4, y + 3);
+      }
+      ctx.restore(); // end pitch ladder clip
+
+      // 4. Tactical Data Corners
+      // Heading Indicator at bottom
+      ctx.fillStyle = 'rgba(10, 25, 46, 0.7)';
+      ctx.strokeStyle = 'rgba(0, 90, 143, 0.6)';
+      ctx.lineWidth = 1;
+      const bW = 130, bH = 22;
+      ctx.fillRect(cx - bW / 2, H - 28, bW, bH);
+      ctx.strokeRect(cx - bW / 2, H - 28, bW, bH);
+      ctx.fillStyle = '#00ffea';
+      ctx.font = '11px Share Tech Mono, monospace';
+      ctx.textAlign = 'center';
+      const dirs = ['N','NE','E','SE','S','SW','W','NW'];
+      const dirTxt = dirs[Math.round(heading / 45) % 8];
+      ctx.fillText(`HDG ${Math.round(heading)}° [ ${dirTxt} ]`, cx, H - 13);
+
+      // Pitch readout (left)
+      ctx.fillStyle = 'rgba(10, 25, 46, 0.7)';
+      ctx.fillRect(10, cy - 14, 80, 28);
+      ctx.strokeRect(10, cy - 14, 80, 28);
+      ctx.fillStyle = '#00ffea';
+      ctx.fillText(`P ${pitch >= 0 ? '+' : ''}${pitch.toFixed(1)}°`, 50, cy + 4);
+
+      // Roll / Attitude status (right)
+      const absRoll = Math.abs(roll);
+      let attText = 'STABLE', attColor = '#00ff66';
+      if (absRoll > 45 || Math.abs(pitch) > 45) { attText = 'TUMBLED'; attColor = '#ff4d4d'; }
+      else if (absRoll > 15 || Math.abs(pitch) > 15) { attText = 'TILTED'; attColor = '#ffb84d'; }
+
+      ctx.fillStyle = 'rgba(10, 25, 46, 0.7)';
+      ctx.strokeStyle = attColor;
+      ctx.fillRect(W - 95, cy - 14, 85, 28);
+      ctx.strokeRect(W - 95, cy - 14, 85, 28);
+      ctx.fillStyle = attColor;
+      ctx.fillText(attText, W - 52, cy + 4);
+
+      ctx.restore();
     }
 
     // Animation loop with smooth interpolation and spring snap-back
@@ -945,6 +1201,12 @@ const char index_html[] PROGMEM = R"rawliteral(
       }
 
       renderer3D.render(scene3D, camera3D);
+
+      // Render PFD Artificial Horizon HUD synchronized with 3D model & user inspection
+      const dispPitchDeg = ((currentPitch + manualPitchOffset) * 180) / Math.PI;
+      const dispRollDeg  = (currentRoll * 180) / Math.PI;
+      const dispYawDeg   = (((currentYaw + manualYawOffset) * 180) / Math.PI + 360) % 360;
+      drawHUD(dispPitchDeg, dispRollDeg, dispYawDeg);
     }
     animate3D();
 
@@ -1053,6 +1315,94 @@ const char index_html[] PROGMEM = R"rawliteral(
     drawCompass(0);
 
     // =====================================================
+    // COMMS AUDIO & VOICE SYNTHESIS ENGINE (Web Audio API)
+    // =====================================================
+    let audioCtx = null;
+    let audioEnabled = false;
+    let lastTumbleAlertTime = 0;
+    let lastVoiceTime = 0;
+
+    function initAudio() {
+      if (!audioCtx) {
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        if (AudioContext) audioCtx = new AudioContext();
+      }
+      if (audioCtx && audioCtx.state === 'suspended') {
+        audioCtx.resume();
+      }
+    }
+
+    function toggleAudio() {
+      initAudio();
+      audioEnabled = !audioEnabled;
+      const btn = document.getElementById('btn-audio-toggle');
+      const icon = document.getElementById('audio-icon');
+      const label = document.getElementById('audio-label');
+
+      if (btn) btn.classList.toggle('active', audioEnabled);
+      if (icon) icon.innerText = audioEnabled ? '🔊' : '🔇';
+      if (label) label.innerText = audioEnabled ? 'AUDIO: ACTIVE' : 'AUDIO: OFF';
+
+      if (audioEnabled) {
+        playChime([523.25, 659.25, 783.99]);
+        speakVoice("Comms audio online. Telemetry link active.");
+        showToast("Comms Audio & Voice Alerts Active", false);
+      } else {
+        if ('speechSynthesis' in window) window.speechSynthesis.cancel();
+        showToast("Comms Audio Muted", false);
+      }
+    }
+
+    function playTone(freq, type = 'sine', duration = 0.1, gainVal = 0.08) {
+      if (!audioEnabled || !audioCtx) return;
+      try {
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.type = type;
+        osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
+        gain.gain.setValueAtTime(gainVal, audioCtx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + duration);
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+        osc.start();
+        osc.stop(audioCtx.currentTime + duration);
+      } catch (e) {}
+    }
+
+    function playChime(freqs, delay = 0.09) {
+      if (!audioEnabled || !audioCtx) return;
+      freqs.forEach((f, i) => {
+        setTimeout(() => playTone(f, 'sine', 0.2, 0.08), i * delay * 1000);
+      });
+    }
+
+    function playWarningAlarm() {
+      if (!audioEnabled || !audioCtx) return;
+      playTone(880, 'sawtooth', 0.12, 0.09);
+      setTimeout(() => playTone(660, 'sawtooth', 0.16, 0.09), 130);
+    }
+
+    function playPacketChirp() {
+      // Subtle 12ms telemetry chirp
+      playTone(2200, 'sine', 0.015, 0.025);
+    }
+
+    function speakVoice(text) {
+      if (!audioEnabled || !('speechSynthesis' in window)) return;
+      const now = Date.now();
+      if (now - lastVoiceTime < 4000) return; // 4s cooldown
+      lastVoiceTime = now;
+      try {
+        window.speechSynthesis.cancel();
+        const utt = new SpeechSynthesisUtterance(text);
+        utt.rate = 1.05;
+        utt.pitch = 1.0;
+        utt.volume = 1.0;
+        window.speechSynthesis.speak(utt);
+      } catch (e) {}
+    }
+
+    // =====================================================
     // TELEMETRY INGEST & WATCHDOG (every 400ms)
     // =====================================================
     setInterval(()=>{
@@ -1070,6 +1420,14 @@ const char index_html[] PROGMEM = R"rawliteral(
             text.innerText = 'LINK ACTIVE';
             grid.className = 'grid grid-container';
             
+            // Audio telemetry pulse & link restoration
+            playPacketChirp();
+            if (window._linkWasLost) {
+              window._linkWasLost = false;
+              playChime([440, 554, 659]);
+              speakVoice("Telemetry link restored.");
+            }
+
             // Packet tracking
             packetCount++;
             rateCount++;
@@ -1116,6 +1474,15 @@ const char index_html[] PROGMEM = R"rawliteral(
             attitudeStatus(document.getElementById('roll-status'),  d.roll);
             pushAndDraw('pitch',d.pitch);
             pushAndDraw('roll',d.roll);
+
+            // Audio warning if satellite attitude tumbles (> 45°)
+            if (Math.abs(d.pitch) > 45 || Math.abs(d.roll) > 45) {
+              if (now - lastTumbleAlertTime > 12000) {
+                lastTumbleAlertTime = now;
+                playWarningAlarm();
+                speakVoice("Warning: Satellite attitude critical.");
+              }
+            }
 
             // Altitude & V-Speed
             document.getElementById('alt').innerText=d.alt.toFixed(1);
@@ -1170,11 +1537,13 @@ const char index_html[] PROGMEM = R"rawliteral(
             text.innerText = 'LINK LOST \u26A0\uFE0F';
             grid.className = 'grid grid-container lost';
             document.getElementById('pkt-rate').innerText = '0.0';
-            // Vibrate on mobile when link is lost (only once per loss event)
+            // Alert on mobile & audio when link is lost (only once per loss event)
             if (!window._linkWasLost) {
               window._linkWasLost = true;
               showToast('\u26A0\uFE0F RF Link Lost!', true);
               if (navigator.vibrate) navigator.vibrate([200, 100, 200, 100, 200]);
+              playTone(330, 'square', 0.35, 0.09);
+              speakVoice("Alert: Telemetry link lost.");
             }
           }
           if (d.connected) window._linkWasLost = false;
