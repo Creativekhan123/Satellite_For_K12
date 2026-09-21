@@ -23,7 +23,7 @@ float pitch = 0;
 void setup() {
   Serial.begin(115200);
   Serial2.begin(9600, SERIAL_8N1, RXD2, TXD2);
-  delay(1000);
+  delay(500); // Short settle delay — reduced from 1000ms
   Serial.println("Initializing ESP32 CanSat Transmitter (BMP280)...");
 
   Wire.begin(); // SDA = GPIO 21, SCL = GPIO 22
@@ -52,7 +52,7 @@ void setup() {
                     Adafruit_BMP280::SAMPLING_X2,     /* Temp. oversampling */
                     Adafruit_BMP280::SAMPLING_X16,    /* Pressure oversampling */
                     Adafruit_BMP280::FILTER_X16,      /* Filtering. */
-                    Adafruit_BMP280::STANDBY_MS_500); /* Standby time. */
+                    Adafruit_BMP280::STANDBY_MS_250); /* 250ms standby — faster than TX interval (400ms) */
   }
 
   // --- BMM350 (Magnetometer / Compass) ---
@@ -66,7 +66,16 @@ void setup() {
   }
 }
 
+// Non-blocking transmit timer — avoids blocking delay() in loop
+unsigned long lastTxTime = 0;
+const unsigned long TX_INTERVAL_MS = 400; // 2.5 Hz transmit rate
+
 void loop() {
+
+  // --- Non-blocking TX gate: only transmit every 400ms ---
+  unsigned long now = millis();
+  if (now - lastTxTime < TX_INTERVAL_MS) return;
+  lastTxTime = now;
 
   // --- Read MPU-6050 ---
   sensors_event_t a, g, temp_mpu;
@@ -116,8 +125,9 @@ void loop() {
   serializeJson(doc, output);
 
   Serial2.println(output);        // Send to RF module
-  Serial.print("Sending: ");
+  Serial.print("TX @ ");
+  Serial.print(TX_INTERVAL_MS);
+  Serial.print("ms | ");
   Serial.println(output);
-
-  delay(400);
+  // No delay() — millis() gate at top of loop handles timing
 }
