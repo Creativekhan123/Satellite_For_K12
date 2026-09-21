@@ -463,6 +463,143 @@ const char index_html[] PROGMEM = R"rawliteral(
       .sat-3d-wrapper.is-fullscreen #fs-overlay-title { display: none !important; }
       #fs-overlay-angles { font-size: 10px; gap: 10px; }
     }
+    /* LOS (Loss of Signal) Emergency Overlay */
+    #los-overlay {
+      display: none;
+      position: absolute;
+      bottom: 12px;
+      left: 12px;
+      background: rgba(10, 20, 36, 0.94);
+      border: 1px solid var(--danger-color);
+      border-left: 4px solid var(--danger-color);
+      box-shadow: 0 0 15px rgba(255, 77, 77, 0.35);
+      padding: 10px 14px;
+      border-radius: 4px;
+      z-index: 10;
+      font-size: 11px;
+      pointer-events: all;
+      max-width: 330px;
+      animation: losPulse 2s infinite ease-in-out;
+    }
+    #los-overlay.show { display: block; }
+    @keyframes losPulse {
+      0%, 100% { border-color: var(--danger-color); box-shadow: 0 0 10px rgba(255,77,77,0.3); }
+      50%      { border-color: #ff8888; box-shadow: 0 0 20px rgba(255,77,77,0.65); }
+    }
+    .los-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--danger-color);
+      font-weight: bold;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      margin-bottom: 6px;
+      font-size: 11px;
+    }
+    .los-pulse-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--danger-color);
+      box-shadow: 0 0 8px var(--danger-color);
+      animation: blink 0.8s infinite;
+      flex-shrink: 0;
+    }
+    .los-body {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 4px;
+      color: var(--text-dim);
+      font-size: 11px;
+      border-top: 1px dashed rgba(255,77,77,0.3);
+      padding-top: 6px;
+    }
+    .los-body strong { color: var(--text-main); }
+    .los-footer {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 8px;
+      margin-top: 6px;
+      padding-top: 6px;
+      border-top: 1px dashed rgba(255,77,77,0.3);
+      font-size: 10px;
+    }
+
+    /* Diagnostics Modal */
+    .diag-modal-backdrop {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(3, 10, 22, 0.88);
+      backdrop-filter: blur(4px);
+      z-index: 100000;
+      align-items: center;
+      justify-content: center;
+      padding: 16px;
+    }
+    .diag-modal-backdrop.show { display: flex; }
+    .diag-card {
+      background: var(--panel-bg);
+      border: 1px solid var(--danger-color);
+      border-left: 4px solid var(--danger-color);
+      box-shadow: 0 0 30px rgba(255,77,77,0.35);
+      max-width: 500px;
+      width: 100%;
+      padding: 18px 20px;
+      color: var(--text-main);
+      position: relative;
+    }
+    .diag-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 14px;
+      border-bottom: 1px solid rgba(255,77,77,0.4);
+      padding-bottom: 8px;
+    }
+    .diag-header h4 {
+      margin: 0;
+      color: var(--danger-color);
+      letter-spacing: 1.5px;
+      text-transform: uppercase;
+      font-size: 13px;
+    }
+    .diag-close-btn {
+      background: transparent;
+      border: 1px solid var(--border-color);
+      color: var(--text-dim);
+      cursor: pointer;
+      font-family: inherit;
+      font-size: 12px;
+      padding: 2px 8px;
+      border-radius: 3px;
+    }
+    .diag-close-btn:hover { color: var(--accent-color); border-color: var(--accent-color); }
+    .diag-step {
+      display: flex;
+      gap: 10px;
+      margin-bottom: 10px;
+      font-size: 12px;
+      line-height: 1.4;
+      align-items: flex-start;
+    }
+    .step-num {
+      background: rgba(255,77,77,0.15);
+      border: 1px solid var(--danger-color);
+      color: var(--danger-color);
+      font-weight: bold;
+      width: 22px;
+      height: 22px;
+      border-radius: 3px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      font-size: 11px;
+    }
+
     /* Toast notification */
     #toast {
       position: fixed;
@@ -606,6 +743,7 @@ const char index_html[] PROGMEM = R"rawliteral(
           <div>MET: <strong id="met-display">00:00:00</strong> <button class="action-btn secondary" onclick="resetMET()" title="Reset Mission Clock">↺</button></div>
           <div>Packets: <strong id="pkt-count">0</strong></div>
           <div>Rate: <strong id="pkt-rate">0.0</strong> Hz</div>
+          <div id="silence-stat" style="display:none; color:var(--danger-color); font-weight:bold;">SILENCE: <strong id="silence-sec" style="color:var(--danger-color);">+0.0s</strong></div>
         </div>
         <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
           <button id="btn-audio-toggle" class="action-btn audio-btn" onclick="toggleAudio()" title="Toggle Comms Audio & Voice Alerts">
@@ -648,6 +786,23 @@ const char index_html[] PROGMEM = R"rawliteral(
         </div>
         <!-- Fullscreen bottom badge -->
         <div id="fs-badge">&#x25CF; Tracking Live Attitude &bull; Drag to Inspect</div>
+        <!-- LOS (Loss of Signal) Emergency Overlay -->
+        <div id="los-overlay">
+          <div class="los-header">
+            <div class="los-pulse-dot"></div>
+            <span>CARRIER LOST // RE-ACQUIRING</span>
+          </div>
+          <div class="los-body">
+            <div>LAST APOGEE: <strong id="los-alt">-- m</strong></div>
+            <div>LAST V-SPEED: <strong id="los-vspeed">-- m/s</strong></div>
+            <div>LAST ATTITUDE: <strong id="los-att">P: -- | R: -- | H: --</strong></div>
+            <div>SILENCE DURATION: <strong id="los-time" style="color:var(--danger-color);">+0.0s</strong></div>
+          </div>
+          <div class="los-footer">
+            <span style="color:var(--text-dim);">FREQ: 433 MHz // SCANNING</span>
+            <button class="action-btn secondary" style="padding:2px 7px; font-size:9px;" onclick="toggleDiagModal()">RF DIAGNOSTICS</button>
+          </div>
+        </div>
       </div>
       <div class="sat-footer">
         <div id="sat-mode-badge" class="sat-badge">&#x25CF; TRACKING LIVE ATTITUDE</div>
@@ -707,6 +862,7 @@ const char index_html[] PROGMEM = R"rawliteral(
         <div class="val-container"><div class="val"><span id="roll">--</span><span class="unit">&deg;</span></div></div>
         <div class="sub-stats">
           <div>STATUS: <strong id="roll-status">LEVEL</strong></div>
+          <div>MOUNT: <strong id="roll-cal-badge" style="cursor:pointer; color:var(--accent-color);" onclick="toggleRollCal()" title="Click to toggle 180° inverted mounting calibration">INVERT 180° (ON)</strong></div>
         </div>
         <canvas class="sparkline" id="canvas-roll" width="240" height="55"></canvas>
       </div>
@@ -1458,6 +1614,17 @@ const char index_html[] PROGMEM = R"rawliteral(
       playTone(2200, 'sine', 0.015, 0.025);
     }
 
+    // Emergency dual-tone tactical klaxon siren for Loss of Signal
+    function playKlaxonAlarm() {
+      if (!audioEnabled || !audioCtx) return;
+      const klaxonTones = [784, 523, 784, 523];
+      klaxonTones.forEach((freq, idx) => {
+        setTimeout(() => {
+          playTone(freq, 'sawtooth', 0.16, 0.11);
+        }, idx * 170);
+      });
+    }
+
     function speakVoice(text) {
       if (!audioEnabled || !('speechSynthesis' in window)) return;
       const now = Date.now();
@@ -1474,8 +1641,130 @@ const char index_html[] PROGMEM = R"rawliteral(
     }
 
     // =====================================================
-    // TELEMETRY INGEST & WATCHDOG (every 400ms)
+    // SENSOR ROLL INVERSION & CALIBRATION (180° Offset)
     // =====================================================
+    // Handles hardware sensor mounted 180° inverted inside probe
+    var rollInvert180 = true; // Default ON: probe upright = 0.0°
+    window.rollInvert180 = rollInvert180;
+
+    function getCorrectedRoll(rawRoll) {
+      if (!window.rollInvert180) return rawRoll;
+      var r = rawRoll - 180;
+      return ((r + 180) % 360 + 360) % 360 - 180;
+    }
+    window.getCorrectedRoll = getCorrectedRoll;
+
+    function toggleRollCal() {
+      window.rollInvert180 = !window.rollInvert180;
+      rollInvert180 = window.rollInvert180;
+      const badge = document.getElementById('roll-cal-badge');
+      if (badge) {
+        badge.innerText = rollInvert180 ? 'INVERT 180° (ON)' : 'RAW 0° (OFF)';
+        badge.style.color = rollInvert180 ? 'var(--accent-color)' : 'var(--text-dim)';
+      }
+      showToast(rollInvert180 ? 'Sensor Roll Invert 180° ACTIVE (Upright = 0°)' : 'Sensor Roll Invert OFF (Raw Mode)', false);
+    }
+    window.toggleRollCal = toggleRollCal;
+
+    // =====================================================
+    // 3D SATELLITE HOLOGRAM GHOST MODE (Wireframe Red on LOS)
+    // =====================================================
+    var ghostWireMat = null;
+    function setHologramGhost(enable) {
+      if (typeof THREE === 'undefined' || !satModel) return;
+      if (!ghostWireMat) {
+        ghostWireMat = new THREE.MeshBasicMaterial({
+          color: 0xff3344,
+          wireframe: true,
+          transparent: true,
+          opacity: 0.65
+        });
+      }
+      satModel.traverse(child => {
+        if (child.isMesh) {
+          if (enable) {
+            if (!child._origMat) child._origMat = child.material;
+            child.material = ghostWireMat;
+          } else if (child._origMat) {
+            child.material = child._origMat;
+          }
+        }
+      });
+    }
+    window.setHologramGhost = setHologramGhost;
+
+    // Diagnostics modal toggle
+    function toggleDiagModal() {
+      const m = document.getElementById('diag-modal-backdrop');
+      if (m) m.classList.toggle('show');
+    }
+    window.toggleDiagModal = toggleDiagModal;
+
+    // =====================================================
+    // TELEMETRY INGEST & SPACE-AGENCY WATCHDOG (every 400ms)
+    // =====================================================
+    var linkLostStartTime = null;
+    var lastKnownSnapshot = {
+      alt: '-- m',
+      vspeed: '-- m/s',
+      pitch: '--°',
+      roll: '--°',
+      head: '--°'
+    };
+    window.lastKnownSnapshot = lastKnownSnapshot;
+
+    function handleLinkLoss() {
+      const dot = document.getElementById('status-dot');
+      const indicator = document.getElementById('status-indicator');
+      const text = document.getElementById('status-text');
+      const grid = document.getElementById('data-grid');
+
+      if (dot) dot.className = 'dot lost';
+      if (indicator) indicator.className = 'status-indicator lost';
+      if (text) text.innerText = 'LINK LOST \u26A0\uFE0F';
+      if (grid) grid.className = 'grid grid-container lost';
+      const pktRate = document.getElementById('pkt-rate');
+      if (pktRate) pktRate.innerText = '0.0';
+
+      if (!window._linkWasLost) {
+        window._linkWasLost = true;
+        linkLostStartTime = Date.now();
+
+        // Hologram red wireframe ghost for 3D model
+        setHologramGhost(true);
+
+        // Populate and display LOS Emergency Overlay
+        const losOverlay = document.getElementById('los-overlay');
+        if (losOverlay) losOverlay.classList.add('show');
+        const losAlt = document.getElementById('los-alt');
+        if (losAlt) losAlt.innerText = lastKnownSnapshot.alt;
+        const losVspeed = document.getElementById('los-vspeed');
+        if (losVspeed) losVspeed.innerText = lastKnownSnapshot.vspeed;
+        const losAtt = document.getElementById('los-att');
+        if (losAtt) losAtt.innerText = `P: ${lastKnownSnapshot.pitch} | R: ${lastKnownSnapshot.roll} | H: ${lastKnownSnapshot.head}`;
+
+        // Silence duration stat in top bar
+        const silStat = document.getElementById('silence-stat');
+        if (silStat) silStat.style.display = 'block';
+
+        showToast('\u26A0\uFE0F RF Link Lost // Re-acquiring...', true);
+        if (navigator.vibrate) navigator.vibrate([250, 100, 250, 100, 250]);
+        playKlaxonAlarm();
+        speakVoice("Warning: Telemetry carrier lost. Loss of signal.");
+      }
+
+      // Live silence stopwatch
+      if (linkLostStartTime) {
+        const elapsed = ((Date.now() - linkLostStartTime) / 1000).toFixed(1);
+        const timeStr = '+' + elapsed + 's';
+        const silSec = document.getElementById('silence-sec');
+        if (silSec) silSec.innerText = timeStr;
+        const losTime = document.getElementById('los-time');
+        if (losTime) losTime.innerText = timeStr;
+      }
+    }
+    window.handleLinkLoss = handleLinkLoss;
+
     setInterval(()=>{
       fetch('/data')
         .then(r=>r.json())
@@ -1494,9 +1783,22 @@ const char index_html[] PROGMEM = R"rawliteral(
             // Audio telemetry pulse & link restoration
             playPacketChirp();
             if (window._linkWasLost) {
+              const blackoutSec = linkLostStartTime ? ((Date.now() - linkLostStartTime) / 1000).toFixed(1) : '0.0';
               window._linkWasLost = false;
+              linkLostStartTime = null;
+
+              // Restore realistic 3D materials
+              setHologramGhost(false);
+
+              // Hide LOS overlay & silence stats
+              const losOverlay = document.getElementById('los-overlay');
+              if (losOverlay) losOverlay.classList.remove('show');
+              const silStat = document.getElementById('silence-stat');
+              if (silStat) silStat.style.display = 'none';
+
               playChime([440, 554, 659]);
-              speakVoice("Telemetry link restored.");
+              speakVoice(`Telemetry link restored. Blackout duration ${blackoutSec} seconds.`);
+              showToast(`Telemetry Link Restored (Blackout: ${blackoutSec}s)`, false);
             }
 
             // Packet tracking
@@ -1511,6 +1813,9 @@ const char index_html[] PROGMEM = R"rawliteral(
               lastRateCalc = now;
             }
 
+            // Apply 180° hardware mounting inversion calibration
+            const correctedRoll = getCorrectedRoll(d.roll || 0);
+
             // Log entry
             flightLog.push({
               time: new Date().toISOString(),
@@ -1518,23 +1823,23 @@ const char index_html[] PROGMEM = R"rawliteral(
               temp: d.temp,
               press: d.press,
               alt: d.alt,
-              roll: d.roll,
+              roll: correctedRoll,
               pitch: d.pitch,
               heading: d.heading
             });
 
             // 3D satellite attitude targets (Pitch on X, Roll on Z, Heading on Y)
             targetPitch = ((d.pitch || 0) * Math.PI) / 180;
-            targetRoll  = ((d.roll  || 0) * Math.PI) / 180;
+            targetRoll  = (correctedRoll * Math.PI) / 180;
             targetYaw   = ((d.heading || 0) * Math.PI) / 180;
             document.getElementById('sat-pitch').innerText=(d.pitch || 0).toFixed(1);
-            document.getElementById('sat-roll').innerText=(d.roll || 0).toFixed(1);
+            document.getElementById('sat-roll').innerText=correctedRoll.toFixed(1);
             document.getElementById('sat-head').innerText=Math.round(d.heading || 0);
-            syncFsOverlay(d.pitch || 0, d.roll || 0, d.heading || 0);
+            syncFsOverlay(d.pitch || 0, correctedRoll, d.heading || 0);
 
             // Dynamics — 3-state attitude status
             document.getElementById('pitch').innerText=d.pitch.toFixed(1);
-            document.getElementById('roll').innerText=d.roll.toFixed(1);
+            document.getElementById('roll').innerText=correctedRoll.toFixed(1);
             function attitudeStatus(el, deg) {
               const abs = Math.abs(deg);
               if (abs > 45)      { el.innerText='TUMBLED'; el.className='status-tumbled'; }
@@ -1542,12 +1847,12 @@ const char index_html[] PROGMEM = R"rawliteral(
               else               { el.innerText='STABLE';  el.className='status-stable';  }
             }
             attitudeStatus(document.getElementById('pitch-status'), d.pitch);
-            attitudeStatus(document.getElementById('roll-status'),  d.roll);
+            attitudeStatus(document.getElementById('roll-status'),  correctedRoll);
             pushAndDraw('pitch',d.pitch);
-            pushAndDraw('roll',d.roll);
+            pushAndDraw('roll',correctedRoll);
 
             // Audio warning if satellite attitude tumbles (> 45°)
-            if (Math.abs(d.pitch) > 45 || Math.abs(d.roll) > 45) {
+            if (Math.abs(d.pitch) > 45 || Math.abs(correctedRoll) > 45) {
               if (now - lastTumbleAlertTime > 12000) {
                 lastTumbleAlertTime = now;
                 playWarningAlarm();
@@ -1602,28 +1907,55 @@ const char index_html[] PROGMEM = R"rawliteral(
             if (!window.minHead || d.heading < window.minHead) { window.minHead=d.heading; document.getElementById('head-min').innerText=Math.round(window.minHead)+'\u00b0'; }
             if (!window.maxHead || d.heading > window.maxHead) { window.maxHead=d.heading; document.getElementById('head-max').innerText=Math.round(window.maxHead)+'\u00b0'; }
             pushAndDraw('head', d.heading);
+
+            // Save last known telemetry state for emergency LOS card
+            lastKnownSnapshot = {
+              alt: d.alt.toFixed(1) + ' m',
+              vspeed: (vSpeed >= 0 ? '+' : '') + vSpeed.toFixed(1) + ' m/s',
+              pitch: (d.pitch || 0).toFixed(1) + '°',
+              roll: correctedRoll.toFixed(1) + '°',
+              head: Math.round(d.heading || 0) + '° (' + hLabel + ')'
+            };
           } else {
-            dot.className = 'dot lost';
-            indicator.className = 'status-indicator lost';
-            text.innerText = 'LINK LOST \u26A0\uFE0F';
-            grid.className = 'grid grid-container lost';
-            document.getElementById('pkt-rate').innerText = '0.0';
-            // Alert on mobile & audio when link is lost (only once per loss event)
-            if (!window._linkWasLost) {
-              window._linkWasLost = true;
-              showToast('\u26A0\uFE0F RF Link Lost!', true);
-              if (navigator.vibrate) navigator.vibrate([200, 100, 200, 100, 200]);
-              playTone(330, 'square', 0.35, 0.09);
-              speakVoice("Alert: Telemetry link lost.");
-            }
+            handleLinkLoss();
           }
-          if (d.connected) window._linkWasLost = false;
         })
-        .catch(()=>{});
+        .catch(()=>{
+          handleLinkLoss();
+        });
     }, 400);
   </script>
   <!-- Toast element (global, always in DOM) -->
   <div id="toast"></div>
+
+  <!-- RF Link Loss Diagnostics Modal -->
+  <div id="diag-modal-backdrop" class="diag-modal-backdrop" onclick="if(event.target===this)toggleDiagModal()">
+    <div class="diag-card">
+      <div class="diag-header">
+        <h4>⚡ RF LINK LOSS // FIELD RECOVERY CHECKLIST</h4>
+        <button class="diag-close-btn" onclick="toggleDiagModal()">✕</button>
+      </div>
+      <div class="diag-step">
+        <div class="step-num">1</div>
+        <div><strong>Transmitter Battery:</strong> Verify probe LiPo voltage > 3.7V. Low voltage causes brownout resets or weak transmission.</div>
+      </div>
+      <div class="diag-step">
+        <div class="step-num">2</div>
+        <div><strong>Antenna Line-of-Sight:</strong> Align receiver antenna polarization (vertical to vertical) with probe antenna.</div>
+      </div>
+      <div class="diag-step">
+        <div class="step-num">3</div>
+        <div><strong>Physical Range & Obstacles:</strong> Ensure probe has line-of-sight and is within RF module range.</div>
+      </div>
+      <div class="diag-step">
+        <div class="step-num">4</div>
+        <div><strong>Hardware Pin Check:</strong> Check receiver wiring on GPIO 32 (TX2) and GPIO 33 (RX2).</div>
+      </div>
+      <div style="text-align:right; margin-top:12px;">
+        <button class="action-btn" onclick="toggleDiagModal()">CLOSE CHECKLIST</button>
+      </div>
+    </div>
+  </div>
 </body>
 </html>
 )rawliteral";
