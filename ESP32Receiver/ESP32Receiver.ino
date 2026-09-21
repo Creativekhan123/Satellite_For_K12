@@ -24,6 +24,8 @@ WebServer server(80);
 // Default JSON — temp, press, alt, roll, pitch, heading
 String latestJson = "{\"temp\":0,\"press\":0,\"alt\":0,\"roll\":0,\"pitch\":0,\"heading\":0}";
 unsigned long lastRxTime = 0;
+float baselineAltitude = -999999.0;
+bool baselineCaptured = false;
 
 // Embedded HTML/CSS/JS (High-Tech Satellite Telemetry UI)
 const char index_html[] PROGMEM = R"rawliteral(
@@ -816,13 +818,27 @@ const char index_html[] PROGMEM = R"rawliteral(
       <div class="section-title">&#x25C6; Flight Telemetry (BMP-280)</div>
       
       <div class="card">
-        <h3>Altitude</h3>
+        <h3>Altitude (ASL)</h3>
         <div class="val-container"><div class="val"><span id="alt">--</span><span class="unit">m</span></div></div>
         <div class="sub-stats">
           <div>APOGEE: <strong id="alt-max">-- m</strong></div>
           <div>V-SPEED: <strong id="alt-vspeed">-- m/s</strong></div>
+          <div>REL: <strong id="alt-rel-sub">-- m</strong></div>
         </div>
         <canvas class="sparkline" id="canvas-alt" width="240" height="55"></canvas>
+      </div>
+
+      <div class="card">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+          <h3 style="margin:0;">Relative Height (AGL)</h3>
+          <button class="action-btn secondary" style="padding:2px 8px; font-size:10px;" onclick="zeroRelativeAlt()" title="Zero / Tare relative height to current altitude">⟲ ZERO</button>
+        </div>
+        <div class="val-container"><div class="val"><span id="rel-alt">--</span><span class="unit">m</span></div></div>
+        <div class="sub-stats">
+          <div>BASE: <strong id="rel-base">-- m</strong></div>
+          <div>PEAK: <strong id="rel-max">-- m</strong></div>
+        </div>
+        <canvas class="sparkline" id="canvas-rel" width="240" height="55"></canvas>
       </div>
 
       <div class="card">
@@ -957,9 +973,9 @@ const char index_html[] PROGMEM = R"rawliteral(
         showToast('No flight telemetry logged yet!', true);
         return;
       }
-      let csv = "Timestamp_ISO,MET_Seconds,Temperature_C,Pressure_hPa,Altitude_m,Roll_deg,Pitch_deg,Heading_deg\n";
+      let csv = "Timestamp_ISO,MET_Seconds,Temperature_C,Pressure_hPa,Altitude_ASL_m,Rel_Height_AGL_m,Roll_deg,Pitch_deg,Heading_deg\n";
       flightLog.forEach(row => {
-        csv += `${row.time},${row.met},${row.temp},${row.press},${row.alt},${row.roll},${row.pitch},${row.heading}\n`;
+        csv += `${row.time},${row.met},${row.temp},${row.press},${row.alt},${row.relAlt !== undefined ? row.relAlt : 0},${row.roll},${row.pitch},${row.heading}\n`;
       });
       const blob = new Blob([csv], { type: 'text/csv' });
       const url = URL.createObjectURL(blob);
@@ -1441,7 +1457,7 @@ const char index_html[] PROGMEM = R"rawliteral(
     // SPARKLINE GRAPH ENGINE
     // =====================================================
     const MAX_POINTS = 30;
-    const hist = { pitch:[], roll:[], temp:[], press:[], alt:[], head:[] };
+    const hist = { pitch:[], roll:[], temp:[], press:[], alt:[], rel:[], head:[] };
 
     function drawSparkline(key) {
       const canvas=document.getElementById('canvas-'+key);
@@ -1701,6 +1717,34 @@ const char index_html[] PROGMEM = R"rawliteral(
     window.toggleDiagModal = toggleDiagModal;
 
     // =====================================================
+    // RELATIVE HEIGHT (AGL) & BASELINE TRACKING
+    // =====================================================
+    var baselineAltitude = null;
+    var maxRelAltitude = 0;
+    window.baselineAltitude = baselineAltitude;
+    window.maxRelAltitude = maxRelAltitude;
+
+    function zeroRelativeAlt() {
+      if (lastAlt !== null && typeof lastAlt === 'number') {
+        window.baselineAltitude = lastAlt;
+        baselineAltitude = lastAlt;
+        window.maxRelAltitude = 0;
+        maxRelAltitude = 0;
+        const baseEl = document.getElementById('rel-base');
+        if (baseEl) baseEl.innerText = baselineAltitude.toFixed(1) + ' m';
+        const maxEl = document.getElementById('rel-max');
+        if (maxEl) maxEl.innerText = '+0.0 m';
+        const relAltEl = document.getElementById('rel-alt');
+        if (relAltEl) relAltEl.innerText = '+0.0';
+        fetch('/zero_alt').catch(()=>{});
+        showToast(`Relative Height Zeroed @ ${baselineAltitude.toFixed(1)} m ASL`, false);
+      } else {
+        showToast("Waiting for altitude telemetry before zeroing", true);
+      }
+    }
+    window.zeroRelativeAlt = zeroRelativeAlt;
+
+    // =====================================================
     // TELEMETRY INGEST & SPACE-AGENCY WATCHDOG (every 400ms)
     // =====================================================
     var linkLostStartTime = null;
@@ -1816,6 +1860,39 @@ const char index_html[] PROGMEM = R"rawliteral(
             // Apply 180° hardware mounting inversion calibration
             const correctedRoll = getCorrectedRoll(d.roll || 0);
 
+            // Relative Height (AGL) calculation & baseline auto-capture
+            if (window.baselineAltitude === null && typeof d.alt === 'number' && !isNaN(d.alt)) {
+              if (d.base_alt !== undefined && d.base_alt !== null) {
+                window.baselineAltitude = d.base_alt;
+              } else {
+                window.baselineAltitude = d.alt;
+              }
+              baselineAltitude = window.baselineAltitude;
+              const baseEl = document.getElementById('rel-base');
+              if (baseEl) baseEl.innerText = baselineAltitude.toFixed(1) + ' m';
+            }
+
+            const relAlt = (window.baselineAltitude !== null && typeof d.alt === 'number')
+              ? (d.alt - window.baselineAltitude)
+              : 0;
+
+            if (relAlt > window.maxRelAltitude) {
+              window.maxRelAltitude = relAlt;
+              maxRelAltitude = relAlt;
+              const maxEl = document.getElementById('rel-max');
+              if (maxEl) maxEl.innerText = (maxRelAltitude >= 0 ? '+' : '') + maxRelAltitude.toFixed(1) + ' m';
+            }
+
+            const relPrefix = relAlt >= 0 ? '+' : '';
+            const relStr = relPrefix + relAlt.toFixed(1);
+            const relAltEl = document.getElementById('rel-alt');
+            if (relAltEl) relAltEl.innerText = relStr;
+
+            const altRelSub = document.getElementById('alt-rel-sub');
+            if (altRelSub) altRelSub.innerText = relStr + ' m';
+
+            pushAndDraw('rel', relAlt);
+
             // Log entry
             flightLog.push({
               time: new Date().toISOString(),
@@ -1823,6 +1900,7 @@ const char index_html[] PROGMEM = R"rawliteral(
               temp: d.temp,
               press: d.press,
               alt: d.alt,
+              relAlt: parseFloat(relAlt.toFixed(1)),
               roll: correctedRoll,
               pitch: d.pitch,
               heading: d.heading
@@ -1860,7 +1938,7 @@ const char index_html[] PROGMEM = R"rawliteral(
               }
             }
 
-            // Altitude & V-Speed
+            // Altitude & V-Speed (Absolute ASL)
             document.getElementById('alt').innerText=d.alt.toFixed(1);
             if (d.alt > maxAltitude) {
               maxAltitude = d.alt;
@@ -1910,7 +1988,7 @@ const char index_html[] PROGMEM = R"rawliteral(
 
             // Save last known telemetry state for emergency LOS card
             lastKnownSnapshot = {
-              alt: d.alt.toFixed(1) + ' m',
+              alt: d.alt.toFixed(1) + ' m (ASL) / ' + relStr + ' m (AGL)',
               vspeed: (vSpeed >= 0 ? '+' : '') + vSpeed.toFixed(1) + ' m/s',
               pitch: (d.pitch || 0).toFixed(1) + '°',
               roll: correctedRoll.toFixed(1) + '°',
@@ -2001,12 +2079,22 @@ void setup() {
   server.on("/data", HTTP_GET, []() {
     bool isConnected = (millis() - lastRxTime) < 3000;
     String response = latestJson;
-    // Strip the last '}' and add the connected status
+    // Strip the last '}' and add the connected status and baseline altitude
     if (response.endsWith("}")) {
       response = response.substring(0, response.length() - 1);
-      response += ",\"connected\":" + String(isConnected ? "true" : "false") + "}";
+      response += ",\"connected\":" + String(isConnected ? "true" : "false");
+      if (baselineCaptured) {
+        response += ",\"base_alt\":" + String(baselineAltitude, 1);
+      }
+      response += "}";
     }
     server.send(200, "application/json", response);
+  });
+
+  // Zero/Tare relative altitude endpoint
+  server.on("/zero_alt", HTTP_GET, []() {
+    baselineCaptured = false; // Next received RF packet will set new baseline
+    server.send(200, "text/plain", "OK");
   });
 
   // Redirect any other URL to dashboard (captive portal)
@@ -2034,6 +2122,15 @@ void loop() {
       if (!error) {
         latestJson = incomingJson;
         lastRxTime = millis(); // Reset the watchdog timer
+        
+        // Auto-capture initial baseline altitude from first packet after turn-on
+        if (!baselineCaptured && doc.containsKey("alt")) {
+          baselineAltitude = doc["alt"].as<float>();
+          baselineCaptured = true;
+          Serial.print("Baseline Launch Altitude set to: ");
+          Serial.print(baselineAltitude);
+          Serial.println(" m");
+        }
         Serial.println(latestJson);
       } else {
         Serial.println("JSON parse error");
