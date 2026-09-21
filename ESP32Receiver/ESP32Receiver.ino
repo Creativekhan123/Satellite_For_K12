@@ -37,8 +37,12 @@ const char index_html[] PROGMEM = R"rawliteral(
   <script src="/GLTFLoader.js"></script>
   <script>
     if (typeof THREE === 'undefined') {
-      document.write('<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"><\\/script>');
-      document.write('<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"><\\/script>');
+      const s1 = document.createElement('script');
+      s1.src = 'https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js';
+      document.head.appendChild(s1);
+      const s2 = document.createElement('script');
+      s2.src = 'https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js';
+      document.head.appendChild(s2);
     }
   </script>
   <style>
@@ -339,16 +343,34 @@ const char index_html[] PROGMEM = R"rawliteral(
     }
     #model-error.show { display: flex; }
     #model-error span { font-size: 36px; }
-    .sat-3d-wrapper:-webkit-full-screen { height: 100vh !important; }
-    .sat-3d-wrapper:-moz-full-screen    { height: 100vh !important; }
-    .sat-3d-wrapper:fullscreen           { height: 100vh !important; background: #030a16; }
+    /* Fullscreen: Native API + CSS Fallback (.is-fullscreen) for iOS Safari & Mobile WebViews */
+    .sat-3d-wrapper:fullscreen,
+    .sat-3d-wrapper:-webkit-full-screen,
+    .sat-3d-wrapper:-moz-full-screen,
+    .sat-3d-wrapper.is-fullscreen {
+      position: fixed !important;
+      inset: 0 !important;
+      top: 0 !important;
+      left: 0 !important;
+      width: 100vw !important;
+      height: 100vh !important;
+      max-width: 100vw !important;
+      max-height: 100vh !important;
+      z-index: 99999 !important;
+      background: #030a16 !important;
+      margin: 0 !important;
+      padding: 0 !important;
+      border: none !important;
+    }
     /* When fullscreen, canvas fills the wrapper */
     .sat-3d-wrapper:fullscreen #sat-3d-canvas,
     .sat-3d-wrapper:-webkit-full-screen #sat-3d-canvas,
     .sat-3d-wrapper:-moz-full-screen #sat-3d-canvas,
+    .sat-3d-wrapper.is-fullscreen #sat-3d-canvas,
     .sat-3d-wrapper:fullscreen #pfd-hud-canvas,
     .sat-3d-wrapper:-webkit-full-screen #pfd-hud-canvas,
-    .sat-3d-wrapper:-moz-full-screen #pfd-hud-canvas {
+    .sat-3d-wrapper:-moz-full-screen #pfd-hud-canvas,
+    .sat-3d-wrapper.is-fullscreen #pfd-hud-canvas {
       width: 100% !important;
       height: 100% !important;
     }
@@ -368,7 +390,8 @@ const char index_html[] PROGMEM = R"rawliteral(
     }
     .sat-3d-wrapper:fullscreen #fs-overlay,
     .sat-3d-wrapper:-webkit-full-screen #fs-overlay,
-    .sat-3d-wrapper:-moz-full-screen #fs-overlay { display: flex; }
+    .sat-3d-wrapper:-moz-full-screen #fs-overlay,
+    .sat-3d-wrapper.is-fullscreen #fs-overlay { display: flex !important; }
     #fs-overlay-title {
       font-size: 13px;
       color: var(--accent-color);
@@ -426,7 +449,8 @@ const char index_html[] PROGMEM = R"rawliteral(
     }
     .sat-3d-wrapper:fullscreen #fs-badge,
     .sat-3d-wrapper:-webkit-full-screen #fs-badge,
-    .sat-3d-wrapper:-moz-full-screen #fs-badge { display: block; }
+    .sat-3d-wrapper:-moz-full-screen #fs-badge,
+    .sat-3d-wrapper.is-fullscreen #fs-badge { display: block !important; }
     @media (max-width: 600px) {
       .sat-header { flex-direction: column; align-items: flex-start; gap: 6px; }
       .sat-angles { gap: 10px; font-size: 12px; }
@@ -435,7 +459,8 @@ const char index_html[] PROGMEM = R"rawliteral(
       /* hide title on small phones in fullscreen so exit btn stays visible */
       .sat-3d-wrapper:fullscreen #fs-overlay-title,
       .sat-3d-wrapper:-webkit-full-screen #fs-overlay-title,
-      .sat-3d-wrapper:-moz-full-screen #fs-overlay-title { display: none; }
+      .sat-3d-wrapper:-moz-full-screen #fs-overlay-title,
+      .sat-3d-wrapper.is-fullscreen #fs-overlay-title { display: none !important; }
       #fs-overlay-angles { font-size: 10px; gap: 10px; }
     }
     /* Toast notification */
@@ -931,28 +956,74 @@ const char index_html[] PROGMEM = R"rawliteral(
     canvas3D.addEventListener('touchend',    () => endDrag(), { passive: true });
     canvas3D.addEventListener('touchcancel', () => endDrag(), { passive: true });
 
-    // ── Fullscreen ────────────────────────────────────────────
-    const sat3dWrapper = document.getElementById('sat-3d-wrapper');
+    // ── Bulletproof Fullscreen Engine (Native + CSS Fallback for iOS & Mobile WebViews) ──
+    function getSatWrapper() {
+      return document.getElementById('sat-3d-wrapper');
+    }
+
+    function isFullscreenActive() {
+      const wrap = getSatWrapper();
+      return !!(document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement || document.msFullscreenElement) ||
+             (wrap && wrap.classList.contains('is-fullscreen'));
+    }
+
+    function updateFsUI(inFs) {
+      const btn = document.getElementById('btn-fullscreen');
+      if (btn) {
+        btn.innerText = inFs ? '\u2715' : '\u26F6';
+        btn.title = inFs ? 'Exit Fullscreen' : 'Fullscreen';
+      }
+      setTimeout(resize3D, 50);
+      setTimeout(resize3D, 200);
+    }
+
     function toggleFullscreen() {
-      const fsEl = document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement;
-      if (!fsEl) {
-        const req = sat3dWrapper.requestFullscreen || sat3dWrapper.webkitRequestFullscreen || sat3dWrapper.mozRequestFullScreen;
-        if (req) req.call(sat3dWrapper);
+      const wrap = getSatWrapper();
+      if (!wrap) return;
+      const inFs = isFullscreenActive();
+      if (!inFs) {
+        // Enter Fullscreen
+        try {
+          const req = wrap.requestFullscreen || wrap.webkitRequestFullscreen || wrap.mozRequestFullScreen || wrap.msRequestFullscreen;
+          if (req) {
+            const p = req.call(wrap);
+            if (p && p.catch) p.catch(() => {});
+          }
+        } catch (e) {}
+
+        wrap.classList.add('is-fullscreen');
+        document.body.style.overflow = 'hidden';
+        updateFsUI(true);
       } else {
-        const ex = document.exitFullscreen || document.webkitExitFullscreen || document.mozCancelFullScreen;
-        if (ex) ex.call(document);
+        // Exit Fullscreen
+        try {
+          const ex = document.exitFullscreen || document.webkitExitFullscreen || document.mozCancelFullScreen || document.msExitFullscreen;
+          if (ex && (document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement || document.msFullscreenElement)) {
+            const p = ex.call(document);
+            if (p && p.catch) p.catch(() => {});
+          }
+        } catch (e) {}
+
+        wrap.classList.remove('is-fullscreen');
+        document.body.style.overflow = '';
+        updateFsUI(false);
       }
     }
-    // Update fullscreen button icon and sync overlay angles
+
     function onFsChange() {
-      const inFs = !!(document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement);
-      document.getElementById('btn-fullscreen').innerText = inFs ? '\u2715' : '\u26F6';
-      document.getElementById('btn-fullscreen').title = inFs ? 'Exit Fullscreen' : 'Fullscreen';
-      setTimeout(resize3D, 80);
+      const wrap = getSatWrapper();
+      const nativeInFs = !!(document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement || document.msFullscreenElement);
+      if (!nativeInFs && wrap && wrap.classList.contains('is-fullscreen')) {
+        wrap.classList.remove('is-fullscreen');
+        document.body.style.overflow = '';
+      }
+      updateFsUI(isFullscreenActive());
     }
+
     document.addEventListener('fullscreenchange',       onFsChange);
     document.addEventListener('webkitfullscreenchange', onFsChange);
     document.addEventListener('mozfullscreenchange',    onFsChange);
+    document.addEventListener('MSFullscreenChange',     onFsChange);
 
     // Keep the fullscreen overlay angles in sync
     function syncFsOverlay(pitch, roll, heading) {
