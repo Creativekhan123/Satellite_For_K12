@@ -670,31 +670,6 @@ const char index_html[] PROGMEM = R"rawliteral(
     .wf-dot.ok   { background: var(--success-color); box-shadow: 0 0 3px var(--success-color); }
     .wf-dot.miss { background: var(--danger-color);  box-shadow: 0 0 3px var(--danger-color); }
 
-    /* ─── Flight Phase Badge ─────────────────────────────────────── */
-    #phase-badge {
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-      font-size: 11px;
-      font-weight: bold;
-      letter-spacing: 1.5px;
-      text-transform: uppercase;
-      padding: 4px 11px;
-      border-radius: 3px;
-      border: 1px solid;
-      transition: all 0.4s ease;
-      white-space: nowrap;
-    }
-    .phase-prelaunch { color: #8ba9c9; border-color: #005a8f; background: rgba(0,90,143,0.15); }
-    .phase-ascent    { color: #00ff66; border-color: #00ff66; background: rgba(0,255,102,0.12);
-                       box-shadow: 0 0 10px rgba(0,255,102,0.3); animation: phasePulse 1.5s infinite; }
-    .phase-apogee    { color: #00ffea; border-color: #00ffea; background: rgba(0,255,234,0.15);
-                       box-shadow: 0 0 14px rgba(0,255,234,0.5); animation: phasePulse 1s infinite; }
-    .phase-descent   { color: #ffb84d; border-color: #ffb84d; background: rgba(255,184,77,0.12);
-                       box-shadow: 0 0 10px rgba(255,184,77,0.3); animation: phasePulse 1.8s infinite; }
-    .phase-landed    { color: #00ff66; border-color: #005a8f; background: rgba(0,90,143,0.15); }
-    @keyframes phasePulse { 0%,100%{opacity:1} 50%{opacity:0.6} }
-
     /* Data Grid */
     .grid { opacity: 1; transition: opacity 0.4s; }
     .grid.lost { opacity: 0.45; }
@@ -810,8 +785,6 @@ const char index_html[] PROGMEM = R"rawliteral(
           <div id="silence-stat" style="display:none; color:var(--danger-color); font-weight:bold;">SILENCE: <strong id="silence-sec" style="color:var(--danger-color);">+0.0s</strong></div>
         </div>
         <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
-          <!-- Flight Phase Badge -->
-          <div id="phase-badge" class="phase-prelaunch">● PRE-LAUNCH</div>
           <!-- Packet Waterfall: last 40 packets (green=ok, red=dropped) -->
           <div id="pkt-waterfall" title="Packet waterfall — green: received │ red: dropped"></div>
           <button id="btn-audio-toggle" class="action-btn audio-btn" onclick="toggleAudio()" title="Toggle Comms Audio & Voice Alerts">
@@ -1016,57 +989,6 @@ const char index_html[] PROGMEM = R"rawliteral(
       });
     }
 
-    // ─── Flight Phase Auto-Detection ──────────────────────────────
-    // Phases: prelaunch → ascent → apogee → descent → landed
-    let currentPhase = 'prelaunch';
-    let apogeeAlerted = false;
-    let prevVSpeed = 0;
-    let landedTicks = 0;
-    const PHASE_META = {
-      prelaunch: ['phase-prelaunch', '\u25cf PRE-LAUNCH'],
-      ascent:    ['phase-ascent',    '\u25b2 ASCENT'],
-      apogee:    ['phase-apogee',    '\u2605 APOGEE'],
-      descent:   ['phase-descent',   '\u25bc DESCENT'],
-      landed:    ['phase-landed',    '\u2713 LANDED'],
-    };
-    function setPhase(phase) {
-      if (currentPhase === phase) return;
-      currentPhase = phase;
-      const el = document.getElementById('phase-badge');
-      if (!el) return;
-      const [cls, lbl] = PHASE_META[phase];
-      el.className = 'phase-badge ' + cls;
-      el.textContent = lbl;
-    }
-    function updateFlightPhase(alt, vs) {
-      if (currentPhase === 'prelaunch' && vs > 0.5) {
-        setPhase('ascent');
-        showToast('\u25b2 Mission Phase: ASCENT', false);
-        speakVoice('Ascent phase confirmed. Satellite is climbing.');
-      }
-      if (currentPhase === 'ascent' && vs < -0.4 && prevVSpeed >= 0) {
-        setPhase('apogee');
-        if (!apogeeAlerted) {
-          apogeeAlerted = true;
-          playChime([659, 880, 1047]);
-          speakVoice('Apogee confirmed at ' + alt.toFixed(0) + ' metres. Descent phase initiated.');
-          showToast('\u2605 APOGEE @ ' + alt.toFixed(1) + ' m', false);
-        }
-        setTimeout(() => { if (currentPhase === 'apogee') setPhase('descent'); }, 2500);
-      }
-      if ((currentPhase === 'descent' || currentPhase === 'apogee') && Math.abs(vs) < 0.3) {
-        landedTicks++;
-        if (landedTicks >= 8) {
-          setPhase('landed');
-          playChime([523, 659, 783, 1047]);
-          speakVoice('Landing confirmed. Satellite recovery phase.');
-          showToast('\u2713 LANDED — Recovery Phase', false);
-        }
-      } else {
-        landedTicks = 0;
-      }
-      prevVSpeed = vs;
-    }
 
     function formatMET(ms) {
       const totalSec = Math.floor(ms / 1000);
@@ -2156,9 +2078,6 @@ const char index_html[] PROGMEM = R"rawliteral(
             lastAlt = d.alt;
             lastAltTime = now;
             pushAndDraw('alt', d.alt);
-
-            // Flight phase auto-detection using filtered v-speed
-            updateFlightPhase(d.alt, vSpeed);
 
             // Pressure Stats
             document.getElementById('press').innerText=d.press.toFixed(2);
