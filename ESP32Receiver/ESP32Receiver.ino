@@ -1037,8 +1037,8 @@ const char index_html[] PROGMEM = R"rawliteral(
         ctx.fillText(c.label,cx+Math.cos(ang)*(R-(isC?24:26)),cy+Math.sin(ang)*(R-(isC?24:26)));
         ctx.shadowBlur=0;
       });
-      // Needle
-      const nAng=(heading-90)*Math.PI/180;
+      // Needle — negated so CW physical rotation → CW needle rotation
+      const nAng=-(heading+90)*Math.PI/180;
       const nLen=R*0.6, tLen=R*0.28;
       ctx.beginPath();
       ctx.moveTo(cx-Math.cos(nAng)*tLen,cy-Math.sin(nAng)*tLen);
