@@ -1684,8 +1684,11 @@ const char index_html[] PROGMEM = R"rawliteral(
     }
 
     function playTone(freq, type = 'sine', duration = 0.1, gainVal = 0.08) {
-      if (!audioEnabled || !audioCtx) return;
+      if (!audioEnabled) return;
+      initAudio(); // lazy-create AudioContext on first user gesture
+      if (!audioCtx) return;
       try {
+        if (audioCtx.state === 'suspended') audioCtx.resume();
         const osc = audioCtx.createOscillator();
         const gain = audioCtx.createGain();
         osc.type = type;
@@ -1700,14 +1703,14 @@ const char index_html[] PROGMEM = R"rawliteral(
     }
 
     function playChime(freqs, delay = 0.09) {
-      if (!audioEnabled || !audioCtx) return;
+      if (!audioEnabled) return;
       freqs.forEach((f, i) => {
         setTimeout(() => playTone(f, 'sine', 0.2, 0.08), i * delay * 1000);
       });
     }
 
     function playWarningAlarm() {
-      if (!audioEnabled || !audioCtx) return;
+      if (!audioEnabled) return;
       playTone(880, 'sawtooth', 0.12, 0.09);
       setTimeout(() => playTone(660, 'sawtooth', 0.16, 0.09), 130);
     }
@@ -1719,12 +1722,10 @@ const char index_html[] PROGMEM = R"rawliteral(
 
     // Emergency dual-tone tactical klaxon siren for Loss of Signal
     function playKlaxonAlarm() {
-      if (!audioEnabled || !audioCtx) return;
+      if (!audioEnabled) return;
       const klaxonTones = [784, 523, 784, 523];
       klaxonTones.forEach((freq, idx) => {
-        setTimeout(() => {
-          playTone(freq, 'sawtooth', 0.16, 0.11);
-        }, idx * 170);
+        setTimeout(() => playTone(freq, 'sawtooth', 0.16, 0.11), idx * 170);
       });
     }
 
