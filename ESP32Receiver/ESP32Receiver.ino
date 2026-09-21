@@ -24,7 +24,7 @@ WebServer server(80);
 // Default JSON — temp, press, alt, roll, pitch, heading
 String latestJson = "{\"temp\":0,\"press\":0,\"alt\":0,\"roll\":0,\"pitch\":0,\"heading\":0}";
 unsigned long lastRxTime = 0;
-const unsigned long LINK_TIMEOUT_MS = 180000; // 3 minutes (180,000 ms) silence timeout
+const unsigned long LINK_TIMEOUT_MS = 8000; // 8 seconds silence timeout (within 6-10s window)
 float baselineAltitude = -999999.0;
 bool baselineCaptured = false;
 
@@ -1753,11 +1753,11 @@ const char index_html[] PROGMEM = R"rawliteral(
 
     // =====================================================
     // TELEMETRY INGEST & SPACE-AGENCY WATCHDOG (every 400ms)
-    // 3-Minute (180,000 ms) Silence Watchdog Rule:
-    // Only trigger link loss after 3 full minutes of no packets.
+    // 8-Second (6-10s) Silence Watchdog Rule:
+    // Only trigger link loss after 8 seconds of no packets.
     // If any packet arrives in between, reset timer & NEVER trigger lost logic.
     // =====================================================
-    const LINK_TIMEOUT_MS = 180000; // 3 minutes (180,000 ms)
+    const LINK_TIMEOUT_MS = 8000; // 8 seconds (8,000 ms) silence timeout
     var linkLostStartTime = null;
     var lastSuccessfulPacketTime = Date.now();
     var lastKnownSnapshot = {
@@ -1829,7 +1829,7 @@ const char index_html[] PROGMEM = R"rawliteral(
         const silStat = document.getElementById('silence-stat');
         if (silStat) silStat.style.display = 'block';
 
-        showToast('\u26A0\uFE0F RF Link Lost (>3 min silence) // Re-acquiring...', true);
+        showToast('\u26A0\uFE0F RF Link Lost // Re-acquiring...', true);
         if (navigator.vibrate) navigator.vibrate([250, 100, 250, 100, 250]);
         playKlaxonAlarm();
         speakVoice("Warning: Telemetry carrier lost. Loss of signal.");
@@ -1848,7 +1848,7 @@ const char index_html[] PROGMEM = R"rawliteral(
     window.handleLinkLoss = handleLinkLoss;
 
     function restoreLink(silenceMs) {
-      const blackoutMs = linkLostStartTime ? (Date.now() - linkLostStartTime) : (silenceMs || 180000);
+      const blackoutMs = linkLostStartTime ? (Date.now() - linkLostStartTime) : (silenceMs || 8000);
       const blackoutSpoken = formatDurationSpoken(blackoutMs);
       const blackoutDisplay = formatDuration(blackoutMs).replace('+', '');
 
@@ -2042,13 +2042,13 @@ const char index_html[] PROGMEM = R"rawliteral(
               head: Math.round(d.heading || 0) + '° (' + hLabel + ')'
             };
           } else {
-            // ESP32 confirmed no RF packets received for > 3 minutes (180,000 ms)
+            // ESP32 confirmed no RF packets received for > 8 seconds (8,000 ms)
             handleLinkLoss(d.silence_ms || (Date.now() - lastSuccessfulPacketTime));
           }
         })
         .catch(()=>{
           // Transient Wi-Fi poll hiccup — DO NOT immediately trigger lost logic!
-          // Only trigger if no valid packets have been received for 3 full minutes (180,000 ms)
+          // Only trigger if no valid packets have been received for 8 seconds (8,000 ms)
           const silence = Date.now() - lastSuccessfulPacketTime;
           if (silence >= LINK_TIMEOUT_MS) {
             handleLinkLoss(silence);
