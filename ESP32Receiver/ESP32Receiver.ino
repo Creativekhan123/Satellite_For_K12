@@ -212,6 +212,15 @@ void loop() {
   dnsServer.processNextRequest();
   ws.cleanupClients(); // Efficiently clean up disconnected WebSocket clients
 
+  // Check incoming commands from USB Serial (Web Serial API)
+  if (Serial.available()) {
+    String usbCmd = Serial.readStringUntil('\n');
+    usbCmd.trim();
+    if (usbCmd.indexOf("zero_alt") >= 0) {
+      baselineCaptured = false; // Next received RF packet will set new baseline
+    }
+  }
+
   // Check incoming RF packet on Serial2
   if (Serial2.available()) {
     String incomingJson = Serial2.readStringUntil('\n');
@@ -229,12 +238,9 @@ void loop() {
         if (!baselineCaptured && doc.containsKey("alt")) {
           baselineAltitude = doc["alt"].as<float>();
           baselineCaptured = true;
-          Serial.print("Baseline Launch Altitude set to: ");
-          Serial.print(baselineAltitude);
-          Serial.println(" m");
         }
 
-        // Build augmented telemetry payload for real-time WebSocket broadcast
+        // Build augmented telemetry payload for real-time WebSocket & USB broadcast
         String broadcastPayload = latestJson;
         if (broadcastPayload.endsWith("}")) {
           broadcastPayload = broadcastPayload.substring(0, broadcastPayload.length() - 1);
@@ -249,10 +255,8 @@ void loop() {
         // Instant broadcast to all connected WebSocket clients with zero polling latency!
         ws.textAll(broadcastPayload);
 
-        Serial.print("RF Bridge -> WS: ");
+        // Simultaneous broadcast to USB Serial (115200 baud) for direct cable connection
         Serial.println(broadcastPayload);
-      } else {
-        Serial.println("JSON parse error from RF module");
       }
     }
   }

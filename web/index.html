@@ -779,7 +779,12 @@
           <button id="btn-audio-toggle" class="action-btn audio-btn active" onclick="toggleAudio()" title="Toggle Comms Audio &amp; Voice Alerts">
             <span id="audio-icon">🔊</span> <span id="audio-label">AUDIO: ACTIVE</span>
           </button>
-          <button class="action-btn secondary" onclick="toggleGatewayModal()" title="Configure Ground Station IP &amp; Port">⚙ LINK: <span id="gateway-mode-label">WS</span></button>
+          <!-- Unified Source Switcher: Wireless WebSocket vs USB Direct Cable -->
+          <div style="display:inline-flex; border:1px solid var(--border-color); border-radius:4px; overflow:hidden;">
+            <button id="btn-mode-ws" class="action-btn" style="padding:4px 9px; font-size:11px; border:none; border-radius:0; background:var(--accent-color); color:#030a16;" onclick="switchSourceMode('ws')" title="Wireless Wi-Fi / WebSocket Link">📡 WI-FI</button>
+            <button id="btn-mode-usb" class="action-btn secondary" style="padding:4px 9px; font-size:11px; border:none; border-radius:0;" onclick="switchSourceMode('usb')" title="Direct USB Cable (Web Serial API)">🔌 USB</button>
+          </div>
+          <button id="btn-gateway-config" class="action-btn secondary" onclick="toggleGatewayModal()" title="Configure Ground Station Gateway">⚙ LINK: <span id="gateway-mode-label">WS</span></button>
           <button class="action-btn" onclick="exportCSV()">💾 Export Flight CSV</button>
         </div>
       </div>
@@ -1942,12 +1947,19 @@
     window.restoreLink = restoreLink;
 
     // =====================================================
-    // DUAL WEBSOCKET + HTTP FALLBACK TELEMETRY INGESTION ENGINE
+    // UNIFIED TELEMETRY INGESTION ENGINE: WEBSOCKET & WEB SERIAL (USB)
     // =====================================================
+    let currentSourceMode = localStorage.getItem('k12_source_mode') || 'ws'; // 'ws' or 'usb'
     let ws = null;
     let wsConnected = false;
     let fallbackPollTimer = null;
     let wsReconnectTimeout = null;
+
+    // Web Serial API state
+    let serialPort = null;
+    let serialReader = null;
+    let serialKeepReading = false;
+    let serialConnected = false;
 
     // Default Gateway Host:
     // If running from ESP32 directly: window.location.hostname
@@ -1955,7 +1967,7 @@
     let gatewayHost = (window.location.hostname && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1' && !window.location.hostname.includes('.github.io'))
       ? window.location.hostname
       : (localStorage.getItem('k12_gateway_host') || '192.168.4.1');
-    let gatewayPort = localStorage.getItem('k12_gateway_port') || '81';
+    let gatewayPort = localStorage.getItem('k12_gateway_port') || '80';
 
     function getWsUrl() {
       if (!gatewayPort || gatewayPort === '80') {
@@ -1972,7 +1984,7 @@
       return `http://${gatewayHost}/zero_alt`;
     }
 
-    // Zero / Tare override to support external gateway URL
+    // Zero / Tare override to support external gateway URL & USB serial commands
     function zeroRelativeAlt() {
       if (lastAlt !== null && typeof lastAlt === 'number') {
         window.baselineAltitude = lastAlt;
@@ -1986,11 +1998,15 @@
         const relAltEl = document.getElementById('rel-alt');
         if (relAltEl) relAltEl.innerText = '+0.0';
 
-        // Notify gateway via WebSocket or HTTP
-        if (ws && ws.readyState === WebSocket.OPEN) {
-          try { ws.send(JSON.stringify({ cmd: 'zero_alt' })); } catch(e){}
+        // Notify gateway via active mode (WebSocket, Serial or HTTP)
+        if (currentSourceMode === 'ws') {
+          if (ws && ws.readyState === WebSocket.OPEN) {
+            try { ws.send(JSON.stringify({ cmd: 'zero_alt' })); } catch(e){}
+          }
+          fetch(getHttpZeroAltUrl(), { mode: 'no-cors' }).catch(()=>{});
+        } else if (currentSourceMode === 'usb') {
+          sendSerialCommand("{\"cmd\":\"zero_alt\"}\n");
         }
-        fetch(getHttpZeroAltUrl(), { mode: 'no-cors' }).catch(()=>{});
         showToast(`Relative Height Zeroed @ ${baselineAltitude.toFixed(1)} m ASL`, false);
       } else {
         showToast("Waiting for altitude telemetry before zeroing", true);
@@ -1998,7 +2014,7 @@
     }
     window.zeroRelativeAlt = zeroRelativeAlt;
 
-    // Process incoming telemetry frame (from WebSocket or HTTP)
+    // Process incoming telemetry frame (from WebSocket, Web Serial, or HTTP)
     function processTelemetryFrame(d) {
       if (!d || typeof d !== 'object') return;
       const dot = document.getElementById('status-dot');
@@ -2013,7 +2029,7 @@
         lastSuccessfulPacketTime = Date.now();
         if (dot) dot.className = 'dot';
         if (indicator) indicator.className = 'status-indicator';
-        if (text) text.innerText = 'LINK ACTIVE';
+        if (text) text.innerText = (currentSourceMode === 'usb') ? 'USB ACTIVE' : 'LINK ACTIVE';
         if (grid) grid.className = 'grid grid-container';
 
         // Waterfall: mark packet received OK
@@ -2217,8 +2233,11 @@
       }
     }
 
-    // Connect to WebSocket Gateway (Instant, event-driven stream)
+    // =====================================================
+    // WIRELESS WEBSOCKET LINK (Wi-Fi)
+    // =====================================================
     function initWebSocket() {
+      if (currentSourceMode !== 'ws') return;
       if (ws) {
         try { ws.close(); } catch(e){}
         ws = null;
@@ -2257,9 +2276,9 @@
         };
 
         ws.onclose = function() {
+          if (currentSourceMode !== 'ws') return;
           console.log("[GroundStation] WebSocket Disconnected. Retrying in 2.5s...");
           wsConnected = false;
-          // Fall back to HTTP polling if WebSocket is closed
           startPollingFallback();
           if (wsReconnectTimeout) clearTimeout(wsReconnectTimeout);
           wsReconnectTimeout = setTimeout(initWebSocket, 2500);
@@ -2272,15 +2291,25 @@
       }
     }
 
-    // HTTP Polling Fallback (used when WebSocket is offline or unsupported)
+    function stopWebSocket() {
+      if (wsReconnectTimeout) { clearTimeout(wsReconnectTimeout); wsReconnectTimeout = null; }
+      if (fallbackPollTimer) { clearInterval(fallbackPollTimer); fallbackPollTimer = null; }
+      if (ws) {
+        try { ws.close(); } catch(e){}
+        ws = null;
+      }
+      wsConnected = false;
+    }
+
     function startPollingFallback() {
+      if (currentSourceMode !== 'ws') return;
       if (fallbackPollTimer) return;
       console.log("[GroundStation] Starting HTTP polling fallback...");
       const modeLabel = document.getElementById('gateway-mode-label');
       if (modeLabel) modeLabel.innerText = 'HTTP';
 
       fallbackPollTimer = setInterval(() => {
-        if (wsConnected) return; // WebSocket takes precedence
+        if (wsConnected || currentSourceMode !== 'ws') return;
         fetch(getHttpDataUrl())
           .then(r => r.json())
           .then(d => processTelemetryFrame(d))
@@ -2293,8 +2322,151 @@
       }, 400);
     }
 
-    // Start communication
-    initWebSocket();
+    // =====================================================
+    // DIRECT USB CABLE LINK (Web Serial API)
+    // =====================================================
+    async function connectWebSerial() {
+      if (!('serial' in navigator)) {
+        alert("Web Serial API is not supported in this browser.\nUse Chrome, Edge, or Opera on Windows, macOS, Linux, or Android with Chrome.");
+        switchSourceMode('ws');
+        return;
+      }
+
+      try {
+        serialPort = await navigator.serial.requestPort();
+        await serialPort.open({ baudRate: 115200 });
+        serialKeepReading = true;
+        serialConnected = true;
+        const modeLabel = document.getElementById('gateway-mode-label');
+        if (modeLabel) modeLabel.innerText = 'USB 115.2k';
+
+        showToast("Connected to ESP32 over USB Serial @ 115200 baud", false);
+        readSerialStream();
+      } catch (err) {
+        console.warn("[WebSerial] Connection cancelled or failed:", err);
+        showToast("USB Connection Failed or Cancelled", true);
+        serialConnected = false;
+      }
+    }
+
+    async function readSerialStream() {
+      const textDecoder = new TextDecoderStream();
+      const readableStreamClosed = serialPort.readable.pipeTo(textDecoder.writable);
+      serialReader = textDecoder.readable.getReader();
+
+      let lineBuffer = '';
+
+      try {
+        while (serialKeepReading) {
+          const { value, done } = await serialReader.read();
+          if (done) {
+            break;
+          }
+          if (value) {
+            lineBuffer += value;
+            const lines = lineBuffer.split('\n');
+            lineBuffer = lines.pop(); // Keep incomplete partial chunk in buffer
+
+            for (const line of lines) {
+              const trimmed = line.trim();
+              if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
+                try {
+                  const data = JSON.parse(trimmed);
+                  processTelemetryFrame(data);
+                } catch(e) {
+                  // Non-JSON debug output from serial
+                }
+              }
+            }
+          }
+        }
+      } catch (error) {
+        console.warn("[WebSerial] Read error:", error);
+      } finally {
+        serialReader.releaseLock();
+      }
+    }
+
+    async function disconnectWebSerial() {
+      serialKeepReading = false;
+      if (serialReader) {
+        try { await serialReader.cancel(); } catch(e){}
+      }
+      if (serialPort) {
+        try { await serialPort.close(); } catch(e){}
+        serialPort = null;
+      }
+      serialConnected = false;
+      console.log("[WebSerial] Serial port disconnected.");
+    }
+
+    async function sendSerialCommand(cmd) {
+      if (!serialPort || !serialPort.writable) return;
+      try {
+        const textEncoder = new TextEncoderStream();
+        const writableStreamClosed = textEncoder.readable.pipeTo(serialPort.writable);
+        const writer = textEncoder.writable.getWriter();
+        await writer.write(cmd);
+        writer.releaseLock();
+      } catch(e) {
+        console.warn("[WebSerial] Write error:", e);
+      }
+    }
+
+    // =====================================================
+    // UNIFIED SOURCE SWITCHER (Wi-Fi vs USB)
+    // =====================================================
+    function switchSourceMode(mode) {
+      currentSourceMode = mode;
+      localStorage.setItem('k12_source_mode', mode);
+
+      const btnWs = document.getElementById('btn-mode-ws');
+      const btnUsb = document.getElementById('btn-mode-usb');
+      const modeLabel = document.getElementById('gateway-mode-label');
+
+      if (mode === 'ws') {
+        if (btnWs) {
+          btnWs.className = 'action-btn';
+          btnWs.style.background = 'var(--accent-color)';
+          btnWs.style.color = '#030a16';
+        }
+        if (btnUsb) {
+          btnUsb.className = 'action-btn secondary';
+          btnUsb.style.background = 'transparent';
+          btnUsb.style.color = 'var(--text-dim)';
+        }
+        disconnectWebSerial();
+        initWebSocket();
+        showToast("Switched to Wireless Wi-Fi / WebSocket Link", false);
+      } else if (mode === 'usb') {
+        if (btnUsb) {
+          btnUsb.className = 'action-btn';
+          btnUsb.style.background = 'var(--accent-color)';
+          btnUsb.style.color = '#030a16';
+        }
+        if (btnWs) {
+          btnWs.className = 'action-btn secondary';
+          btnWs.style.background = 'transparent';
+          btnWs.style.color = 'var(--text-dim)';
+        }
+        stopWebSocket();
+        if (modeLabel) modeLabel.innerText = 'USB';
+        connectWebSerial();
+      }
+    }
+    window.switchSourceMode = switchSourceMode;
+
+    // Initialize source mode on startup
+    if (currentSourceMode === 'usb') {
+      const btnUsb = document.getElementById('btn-mode-usb');
+      const btnWs = document.getElementById('btn-mode-ws');
+      if (btnUsb) { btnUsb.style.background = 'var(--accent-color)'; btnUsb.style.color = '#030a16'; }
+      if (btnWs) { btnWs.style.background = 'transparent'; btnWs.style.color = 'var(--text-dim)'; }
+      const modeLabel = document.getElementById('gateway-mode-label');
+      if (modeLabel) modeLabel.innerText = 'USB (Click)';
+    } else {
+      initWebSocket();
+    }
 
     // Watchdog check loop (checks RF timeout every 500ms even if no packets received)
     setInterval(() => {
@@ -2390,20 +2562,20 @@
 
     function saveGatewaySettings() {
       const host = document.getElementById('input-gateway-host').value.trim() || '192.168.4.1';
-      const port = document.getElementById('input-gateway-port').value.trim() || '81';
+      const port = document.getElementById('input-gateway-port').value.trim() || '80';
       gatewayHost = host;
       gatewayPort = port;
       localStorage.setItem('k12_gateway_host', gatewayHost);
       localStorage.setItem('k12_gateway_port', gatewayPort);
       toggleGatewayModal();
       showToast(`Gateway Configured: ${gatewayHost}:${gatewayPort}`, false);
-      initWebSocket();
+      if (currentSourceMode === 'ws') initWebSocket();
     }
     window.saveGatewaySettings = saveGatewaySettings;
 
     function resetGatewayDefaults() {
       document.getElementById('input-gateway-host').value = '192.168.4.1';
-      document.getElementById('input-gateway-port').value = '81';
+      document.getElementById('input-gateway-port').value = '80';
     }
     window.resetGatewayDefaults = resetGatewayDefaults;
 
