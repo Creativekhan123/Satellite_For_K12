@@ -1,6 +1,5 @@
 #include <WiFi.h>
-#include <AsyncTCP.h>
-#include <ESPAsyncWebServer.h>
+#include <WebServer.h>
 #include <DNSServer.h>
 #include <ArduinoJson.h>
 
@@ -12,10 +11,8 @@ const char* password = "K12 Satellite";
 const byte DNS_PORT = 53;
 DNSServer dnsServer;
 
-// AsyncWebServer on standard HTTP port 80
-AsyncWebServer server(80);
-// AsyncWebSocket on "/ws" endpoint
-AsyncWebSocket ws("/ws");
+// Standard 100% Rock-Solid ESP32 WebServer on port 80
+WebServer server(80);
 
 // RF Module connected to Serial2
 #define RXD2 33
@@ -24,11 +21,11 @@ AsyncWebSocket ws("/ws");
 // Default JSON — temp, press, alt, roll, pitch, heading
 String latestJson = "{\"temp\":0,\"press\":0,\"alt\":0,\"roll\":0,\"pitch\":0,\"heading\":0}";
 unsigned long lastRxTime = 0;
-const unsigned long LINK_TIMEOUT_MS = 6000; // 6 seconds silence timeout (within 6-10s window)
+const unsigned long LINK_TIMEOUT_MS = 6000; // 6 seconds silence timeout
 float baselineAltitude = -999999.0;
 bool baselineCaptured = false;
 
-// Lightweight Landing Page & Quick-Launch Portal (<1.5 KB, zero RAM burden)
+// Lightweight Gateway Landing Portal (<1.5 KB, zero RAM impact)
 const char landing_html[] PROGMEM = R"rawliteral(
 <!DOCTYPE html>
 <html lang="en">
@@ -79,64 +76,28 @@ const char landing_html[] PROGMEM = R"rawliteral(
 </head>
 <body>
   <div class="card">
-    <div class="badge">● GATEWAY ONLINE (WEBSOCKET PORT 80)</div>
+    <div class="badge">● GATEWAY ONLINE (DUAL STREAM: HTTP + USB)</div>
     <h1>🛰️ K12-SAT // GROUND STATION</h1>
-    <p>This ESP32 is running as a dedicated high-speed RF-to-WebSocket bridge (ws://192.168.4.1/ws). Heavy 3D assets are rendered locally on your device GPU via the PWA app.</p>
+    <p>This ESP32 is running as a lightweight RF Data Bridge. 3D assets are rendered locally on your device GPU via the PWA app.</p>
     <a href="/data" class="btn btn-secondary">View Live JSON Raw Data (/data)</a>
     <div class="status-box">
       <strong>Field Operation Quick-Start:</strong><br>
       1. Open your saved <strong>K12-SAT Mission Control PWA</strong> app.<br>
-      2. If not saved, launch from your local folder / GitHub Pages.<br>
-      3. Live orientation &amp; telemetry stream automatically connects to <code>ws://192.168.4.1/ws</code>.
+      2. If using Wi-Fi, it polls <code>http://192.168.4.1/data</code>.<br>
+      3. If using USB Cable, click <strong>🔌 USB</strong> in the top bar to connect instantly.
     </div>
   </div>
 </body>
 </html>
 )rawliteral";
 
-// WebSocket Event Handler
-void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventType type,
-               void *arg, uint8_t *data, size_t len) {
-  if (type == WS_EVT_CONNECT) {
-    Serial.printf("WebSocket client #%u connected from %s\n", client->id(), client->remoteIP().toString().c_str());
-    // Immediately send current state upon connection
-    unsigned long nowMs = millis();
-    unsigned long silenceMs = (lastRxTime == 0) ? nowMs : (nowMs - lastRxTime);
-    bool isConnected = (silenceMs < LINK_TIMEOUT_MS);
-
-    String response = latestJson;
-    if (response.endsWith("}")) {
-      response = response.substring(0, response.length() - 1);
-      response += ",\"connected\":" + String(isConnected ? "true" : "false");
-      response += ",\"silence_ms\":" + String(silenceMs);
-      if (baselineCaptured) {
-        response += ",\"base_alt\":" + String(baselineAltitude, 1);
-      }
-      response += "}";
-    }
-    client->text(response);
-  } else if (type == WS_EVT_DISCONNECT) {
-    Serial.printf("WebSocket client #%u disconnected\n", client->id());
-  } else if (type == WS_EVT_DATA) {
-    // Handle client commands (e.g. zero_alt)
-    AwsFrameInfo *info = (AwsFrameInfo*)arg;
-    if (info->final && info->index == 0 && info->len == len && info->opcode == WS_TEXT) {
-      data[len] = 0;
-      if (strstr((char*)data, "zero_alt") != NULL) {
-        baselineCaptured = false;
-        Serial.println("Zero Alt command received via WebSocket!");
-      }
-    }
-  }
-}
-
 void setup() {
   delay(100);
   Serial.begin(115200);
   Serial2.begin(9600, SERIAL_8N1, RXD2, TXD2);
-  Serial2.setTimeout(50); // Snappy 50ms read timeout
+  Serial2.setTimeout(50); // Snappy 50ms read timeout prevents blocking
 
-  Serial.println("\nInitializing ESP32 Lightweight Gateway (WebSocket Bridge)...");
+  Serial.println("\nInitializing ESP32 Ground Station Gateway...");
 
   // Setup Wi-Fi Access Point
   WiFi.mode(WIFI_AP);
@@ -147,17 +108,12 @@ void setup() {
   // Captive Portal DNS — any domain → ESP32
   dnsServer.start(DNS_PORT, "*", WiFi.softAPIP());
 
-  // Attach WebSocket handler to /ws
-  ws.onEvent(onWsEvent);
-  server.addHandler(&ws);
-
-  // Landing page handler
-  auto handleLanding = [](AsyncWebServerRequest *request) {
-    AsyncWebServerResponse *response = request->beginResponse_P(200, "text/html", (const uint8_t*)landing_html, sizeof(landing_html) - 1);
-    response->addHeader("Cache-Control", "no-cache, no-store, must-revalidate");
-    request->send(response);
+  auto handleLanding = []() {
+    server.sendHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+    server.send_P(200, "text/html", landing_html, sizeof(landing_html) - 1);
   };
 
+  // Serve landing page
   server.on("/", HTTP_GET, handleLanding);
   server.on("/index.html", HTTP_GET, handleLanding);
   server.on("/generate_204", HTTP_GET, handleLanding);        // Android captive portal
@@ -167,8 +123,8 @@ void setup() {
   server.on("/connecttest.txt", HTTP_GET, handleLanding);     // Windows captive portal
   server.on("/ncsi.txt", HTTP_GET, handleLanding);            // Windows captive portal
 
-  // Live JSON data endpoint (HTTP Fallback)
-  server.on("/data", HTTP_GET, [](AsyncWebServerRequest *request) {
+  // Serve live JSON telemetry endpoint with full CORS headers
+  server.on("/data", HTTP_GET, []() {
     unsigned long nowMs = millis();
     unsigned long silenceMs = (lastRxTime == 0) ? nowMs : (nowMs - lastRxTime);
     bool isConnected = (silenceMs < LINK_TIMEOUT_MS);
@@ -183,45 +139,47 @@ void setup() {
       }
       response += "}";
     }
-    request->send(200, "application/json", response);
+    server.sendHeader("Access-Control-Allow-Origin", "*");
+    server.send(200, "application/json", response);
   });
 
   // Zero / Tare relative altitude endpoint
-  server.on("/zero_alt", HTTP_GET, [](AsyncWebServerRequest *request) {
+  server.on("/zero_alt", HTTP_GET, []() {
     baselineCaptured = false; // Next received RF packet will set new baseline
-    request->send(200, "text/plain", "OK");
+    server.sendHeader("Access-Control-Allow-Origin", "*");
+    server.send(200, "text/plain", "OK");
   });
 
-  // Captive Portal 404 handler
-  server.onNotFound([](AsyncWebServerRequest *request) {
-    String uri = request->url();
+  // Captive Portal fallback
+  server.onNotFound([]() {
+    String uri = server.uri();
     if (uri.endsWith(".html") || uri.endsWith(".htm") || uri == "/" || uri.indexOf("generate_204") >= 0 || uri.indexOf("hotspot") >= 0) {
-      AsyncWebServerResponse *response = request->beginResponse_P(200, "text/html", (const uint8_t*)landing_html, sizeof(landing_html) - 1);
-      response->addHeader("Cache-Control", "no-cache, no-store, must-revalidate");
-      request->send(response);
+      server.sendHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+      server.send_P(200, "text/html", landing_html, sizeof(landing_html) - 1);
     } else {
-      request->redirect(String("http://") + WiFi.softAPIP().toString());
+      server.sendHeader("Location", String("http://") + WiFi.softAPIP().toString(), true);
+      server.send(302, "text/plain", "");
     }
   });
 
   server.begin();
-  Serial.println("Async WebServer & WebSocket Bridge online on port 80!");
+  Serial.println("Ground Station Gateway online on port 80!");
 }
 
 void loop() {
   dnsServer.processNextRequest();
-  ws.cleanupClients(); // Efficiently clean up disconnected WebSocket clients
+  server.handleClient();
 
-  // Check incoming commands from USB Serial (Web Serial API)
+  // Read incoming commands from USB Serial (Web Serial API)
   if (Serial.available()) {
     String usbCmd = Serial.readStringUntil('\n');
     usbCmd.trim();
     if (usbCmd.indexOf("zero_alt") >= 0) {
-      baselineCaptured = false; // Next received RF packet will set new baseline
+      baselineCaptured = false;
     }
   }
 
-  // Check incoming RF packet on Serial2
+  // Read incoming RF packet on Serial2
   if (Serial2.available()) {
     String incomingJson = Serial2.readStringUntil('\n');
     incomingJson.trim();
@@ -240,7 +198,7 @@ void loop() {
           baselineCaptured = true;
         }
 
-        // Build augmented telemetry payload for real-time WebSocket & USB broadcast
+        // Build augmented telemetry payload
         String broadcastPayload = latestJson;
         if (broadcastPayload.endsWith("}")) {
           broadcastPayload = broadcastPayload.substring(0, broadcastPayload.length() - 1);
@@ -251,9 +209,6 @@ void loop() {
           }
           broadcastPayload += "}";
         }
-
-        // Instant broadcast to all connected WebSocket clients with zero polling latency!
-        ws.textAll(broadcastPayload);
 
         // Simultaneous broadcast to USB Serial (115200 baud) for direct cable connection
         Serial.println(broadcastPayload);

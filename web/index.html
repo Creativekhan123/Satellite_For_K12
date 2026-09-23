@@ -2316,60 +2316,38 @@
     }
 
     // =====================================================
-    // WIRELESS WEBSOCKET LINK (Wi-Fi)
+    // WIRELESS LINK (Wi-Fi: HTTP Poll + Optional WebSocket)
     // =====================================================
     function initWebSocket() {
       if (currentSourceMode !== 'ws') return;
-      if (ws) {
-        try { ws.close(); } catch(e){}
-        ws = null;
-      }
+      const modeLabel = document.getElementById('gateway-mode-label');
+      if (modeLabel) modeLabel.innerText = 'WI-FI';
+
+      // Start snappy HTTP polling immediately for guaranteed 100% stability
+      startPollingFallback();
 
       const wsUrl = getWsUrl();
-      console.log("[GroundStation] Connecting to WebSocket Gateway:", wsUrl);
-
-      const modeLabel = document.getElementById('gateway-mode-label');
-      if (modeLabel) modeLabel.innerText = 'WS';
-
       try {
         ws = new WebSocket(wsUrl);
-
         ws.onopen = function() {
-          console.log("[GroundStation] WebSocket Connected!");
           wsConnected = true;
-          if (fallbackPollTimer) {
-            clearInterval(fallbackPollTimer);
-            fallbackPollTimer = null;
-          }
-          showToast(`Gateway Connected: ${gatewayHost}:${gatewayPort}`, false);
+          if (modeLabel) modeLabel.innerText = 'WS';
         };
-
         ws.onmessage = function(event) {
           try {
             const data = JSON.parse(event.data);
             processTelemetryFrame(data);
-          } catch(e) {
-            console.warn("Invalid telemetry packet:", event.data);
-          }
+          } catch(e){}
         };
-
-        ws.onerror = function(err) {
-          console.warn("[GroundStation] WebSocket Error:", err);
-        };
-
         ws.onclose = function() {
-          if (currentSourceMode !== 'ws') return;
-          console.log("[GroundStation] WebSocket Disconnected. Retrying in 2.5s...");
           wsConnected = false;
-          startPollingFallback();
-          if (wsReconnectTimeout) clearTimeout(wsReconnectTimeout);
-          wsReconnectTimeout = setTimeout(initWebSocket, 2500);
+          if (modeLabel) modeLabel.innerText = 'WI-FI';
+        };
+        ws.onerror = function() {
+          wsConnected = false;
         };
       } catch(e) {
-        console.warn("[GroundStation] WebSocket instantiation error:", e);
-        startPollingFallback();
-        if (wsReconnectTimeout) clearTimeout(wsReconnectTimeout);
-        wsReconnectTimeout = setTimeout(initWebSocket, 3000);
+        wsConnected = false;
       }
     }
 
