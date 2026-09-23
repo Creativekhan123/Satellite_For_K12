@@ -153,7 +153,7 @@ void setup() {
 
   // Landing page handler
   auto handleLanding = [](AsyncWebServerRequest *request) {
-    AsyncWebServerResponse *response = request->beginResponse_P(200, "text/html", landing_html, sizeof(landing_html) - 1);
+    AsyncWebServerResponse *response = request->beginResponse_P(200, "text/html", (const uint8_t*)landing_html, sizeof(landing_html) - 1);
     response->addHeader("Cache-Control", "no-cache, no-store, must-revalidate");
     request->send(response);
   };
@@ -196,7 +196,7 @@ void setup() {
   server.onNotFound([](AsyncWebServerRequest *request) {
     String uri = request->url();
     if (uri.endsWith(".html") || uri.endsWith(".htm") || uri == "/" || uri.indexOf("generate_204") >= 0 || uri.indexOf("hotspot") >= 0) {
-      AsyncWebServerResponse *response = request->beginResponse_P(200, "text/html", landing_html, sizeof(landing_html) - 1);
+      AsyncWebServerResponse *response = request->beginResponse_P(200, "text/html", (const uint8_t*)landing_html, sizeof(landing_html) - 1);
       response->addHeader("Cache-Control", "no-cache, no-store, must-revalidate");
       request->send(response);
     } else {
